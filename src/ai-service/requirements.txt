@@ -1,0 +1,20 @@
+fastapi==0.115.1
+uvicorn==0.34.0
+pydantic==2.10.6
+pytest==8.3.5
+httpx==0.28.1
+pyyaml==6.0.2
+azure.identity==1.21.0
+requests==2.32.4
+openai==1.66.3
+pillow==11.1.0
+dotenv==0.9.9
+pylint==3.3.5
+# OpenTelemetry packages
+opentelemetry-api==1.24.0
+opentelemetry-sdk==1.24.0
+opentelemetry-exporter-otlp-proto-grpc==1.24.0
+opentelemetry-instrumentation-fastapi==0.47.0
+opentelemetry-instrumentation-requests==0.47.0
+opentelemetry-instrumentation-aiohttp-client==0.47.0
+opentelemetry-semantic-conventions==0.47.0

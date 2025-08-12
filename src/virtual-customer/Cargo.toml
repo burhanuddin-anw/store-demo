@@ -1,0 +1,20 @@
+[package]
+name = "virtual-customer"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+rand = "0.8.5"
+reqwest = { version = "0.12.5", features = ["blocking"] }
+serde = { version = "1.0.204", features = ["derive"] }
+serde_json = "1.0.120"
+
+# OpenTelemetry dependencies
+opentelemetry = { version = "0.20.0", features = ["trace", "rt-tokio"] }
+opentelemetry_sdk = { version = "0.20.0", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.13.0", features = ["grpc-tonic", "http-proto"] }
+tracing = "0.1.37"
+tracing-opentelemetry = "0.20.0"
+tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
