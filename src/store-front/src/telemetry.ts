@@ -9,11 +9,12 @@ import { ZoneContextManager } from '@opentelemetry/context-zone';
 
 // Initialize the OpenTelemetry provider
 export function initTelemetry() {
-  // Use environment variables if available
-  const serviceName = 'store-front';
-  const serviceVersion = import.meta.env.VITE_APP_VERSION || '0.1.0';
-  const environment = import.meta.env.VITE_ENVIRONMENT || 'development';
-  const collectorUrl = import.meta.env.VITE_OTEL_EXPORTER_OTLP_ENDPOINT || 'http://localhost:4318/v1/traces';
+  try {
+    // Use environment variables if available
+    const serviceName = 'store-front';
+    const serviceVersion = import.meta.env.VITE_APP_VERSION || '0.1.0';
+    const environment = import.meta.env.VITE_ENVIRONMENT || 'development';
+    const collectorUrl = import.meta.env.VITE_OTEL_EXPORTER_OTLP_ENDPOINT || 'http://localhost:4318/v1/traces';
 
   // Create a resource that identifies your application
   const resource = new Resource({
@@ -64,5 +65,22 @@ export function initTelemetry() {
   
   console.log(`OpenTelemetry instrumentation initialized for ${serviceName}`);
   
-  return { tracer, provider };
+    return { tracer, provider };
+  } catch (error) {
+    console.error('Failed to initialize OpenTelemetry:', error);
+    return { tracer: undefined, provider: undefined };
+  }
+}
+
+// Cleanup function to be called when the application is unmounting
+export function shutdownTelemetry(provider?: WebTracerProvider) {
+  if (provider) {
+    try {
+      provider.shutdown()
+        .then(() => console.log('OpenTelemetry provider shut down successfully'))
+        .catch(error => console.error('Error shutting down OpenTelemetry provider:', error));
+    } catch (error) {
+      console.error('Error during OpenTelemetry shutdown:', error);
+    }
+  }
 }

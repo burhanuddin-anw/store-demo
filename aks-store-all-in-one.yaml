@@ -1,2348 +1,385 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: otel-demo
----
-
-apiVersion: policy/v1
-kind: PodDisruptionBudget
-metadata:
-  name: "opensearch-pdb"
-  labels:
-    app.kubernetes.io/name: opensearch
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: "2.19.0"
-    app.kubernetes.io/component: opensearch
-spec:
-  maxUnavailable: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: opensearch
-      app.kubernetes.io/instance: store-demo
----
-
-apiVersion: v1
-kind: ServiceAccount
-automountServiceAccountToken: false
-metadata:
-  labels:
-    app.kubernetes.io/name: grafana
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: "11.5.2"
-  name: grafana
-  namespace: otel-demo
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: jaeger
-  labels:
-    app.kubernetes.io/name: jaeger
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: "1.53.0"
-    app.kubernetes.io/component: all-in-one
-automountServiceAccountToken: true
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: otel-collector
-  namespace: otel-demo
-  labels:
-    app.kubernetes.io/name: opentelemetry-collector
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: "0.120.0"
-    app.kubernetes.io/component: standalone-collector
----
-
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  labels:
-    app.kubernetes.io/component: server
-    app.kubernetes.io/name: prometheus
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: v3.1.0
-    app.kubernetes.io/part-of: prometheus
-  name: prometheus
-  namespace: otel-demo
-  annotations:
-    {}
----
-
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: store-demo
-  labels:
-    
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: "2.0.2"
-    app.kubernetes.io/part-of: store-demo
----
-
-apiVersion: v1
-kind: Secret
-metadata:
-  name: grafana
-  namespace: otel-demo
-  labels:
-    app.kubernetes.io/name: grafana
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: "11.5.2"
-type: Opaque
-data:
-  
-  admin-user: "YWRtaW4="
-  admin-password: "YWRtaW4="
-  ldap-toml: ""
----
-
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: grafana
-  namespace: otel-demo
-  labels:
-    app.kubernetes.io/name: grafana
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: "11.5.2"
-data:
-  
-  plugins: grafana-opensearch-datasource
-  grafana.ini: |
-    [analytics]
-    check_for_updates = true
-    [auth]
-    disable_login_form = true
-    [auth.anonymous]
-    enabled = true
-    org_name = Main Org.
-    org_role = Admin
-    [grafana_net]
-    url = https://grafana.net
-    [log]
-    mode = console
-    [paths]
-    data = /var/lib/grafana/
-    logs = /var/log/grafana
-    plugins = /var/lib/grafana/plugins
-    provisioning = /etc/grafana/provisioning
-    [server]
-    domain = ''
-    root_url = %(protocol)s://%(domain)s:%(http_port)s/grafana
-    serve_from_sub_path = true
-  datasources.yaml: |
-    apiVersion: 1
-    datasources:
-    - editable: true
-      isDefault: true
-      jsonData:
-        exemplarTraceIdDestinations:
-        - datasourceUid: webstore-traces
-          name: trace_id
-        - name: trace_id
-          url: http://localhost:8080/jaeger/ui/trace/$${__value.raw}
-          urlDisplayLabel: View in Jaeger UI
-      name: Prometheus
-      type: prometheus
-      uid: webstore-metrics
-      url: http://prometheus:9090
-    - editable: true
-      isDefault: false
-      name: Jaeger
-      type: jaeger
-      uid: webstore-traces
-      url: http://jaeger-query:16686/jaeger/ui
-    - access: proxy
-      editable: true
-      isDefault: false
-      jsonData:
-        database: otel
-        flavor: opensearch
-        logLevelField: severity.text.keyword
-        logMessageField: body
-        pplEnabled: true
-        timeField: observedTimestamp
-        version: 2.18.0
-      name: OpenSearch
-      type: grafana-opensearch-datasource
-      uid: webstore-logs
-      url: http://opensearch:9200/
-  dashboardproviders.yaml: |
-    apiVersion: 1
-    providers:
-    - disableDeletion: false
-      editable: true
-      folder: ""
-      name: default
-      options:
-        path: /var/lib/grafana/dashboards/default
-      orgId: 1
-      type: file
----
-
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: opensearch-config
-  labels:
-    app.kubernetes.io/name: opensearch
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: "2.19.0"
-    app.kubernetes.io/component: opensearch
-data:
-  opensearch.yml: |
-    cluster.name: opensearch-cluster
-    
-    # Bind to all interfaces because we don't know what IP address Docker will assign to us.
-    network.host: 0.0.0.0
-    
-    # Setting network.host to a non-loopback address enables the annoying bootstrap checks. "Single-node" mode disables them again.
-    # Implicitly done if ".singleNode" is set to "true".
-    # discovery.type: single-node
-    
-    # Start OpenSearch Security Demo Configuration
-    # WARNING: revise all the lines below before you go into production
-    # plugins:
-    #   security:
-    #     ssl:
-    #       transport:
-    #         pemcert_filepath: esnode.pem
-    #         pemkey_filepath: esnode-key.pem
-    #         pemtrustedcas_filepath: root-ca.pem
-    #         enforce_hostname_verification: false
-    #       http:
-    #         enabled: true
-    #         pemcert_filepath: esnode.pem
-    #         pemkey_filepath: esnode-key.pem
-    #         pemtrustedcas_filepath: root-ca.pem
-    #     allow_unsafe_democertificates: true
-    #     allow_default_init_securityindex: true
-    #     authcz:
-    #       admin_dn:
-    #         - CN=kirk,OU=client,O=client,L=test,C=de
-    #     audit.type: internal_opensearch
-    #     enable_snapshot_restore_privilege: true
-    #     check_snapshot_restore_write_privileges: true
-    #     restapi:
-    #       roles_enabled: ["all_access", "security_rest_api_access"]
-    #     system_indices:
-    #       enabled: true
-    #       indices:
-    #         [
-    #           ".opendistro-alerting-config",
-    #           ".opendistro-alerting-alert*",
-    #           ".opendistro-anomaly-results*",
-    #           ".opendistro-anomaly-detector*",
-    #           ".opendistro-anomaly-checkpoints",
-    #           ".opendistro-anomaly-detection-state",
-    #           ".opendistro-reports-*",
-    #           ".opendistro-notifications-*",
-    #           ".opendistro-notebooks",
-    #           ".opendistro-asynchronous-search-response*",
-    #         ]
-    ######## End OpenSearch Security Demo Configuration ########
----
-
+# OpenTelemetry Collector ConfigMap
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: otel-collector-config
-  namespace: observability
 data:
   otel-collector-config.yaml: |
     receivers:
       otlp:
         protocols:
           grpc:
-            endpoint: 0.0.0.0:4317
+            endpoint: "0.0.0.0:4317"
           http:
-            endpoint: 0.0.0.0:4318
-      jaeger:
-        protocols:
-          grpc:
-            endpoint: 0.0.0.0:14250
-          thrift_http:
-            endpoint: 0.0.0.0:14268
-          thrift_compact:
-            endpoint: 0.0.0.0:6831
-          thrift_binary:
-            endpoint: 0.0.0.0:6832
-      httpcheck/store-front:
-        targets:
-          - endpoint: http://store-front.default:80
-            method: GET
-        collection_interval: 30s
+            endpoint: "0.0.0.0:4318"
 
     processors:
+      batch:
+        timeout: 1s
+        send_batch_size: 1024
       memory_limiter:
-        limit_percentage: 80
-        spike_limit_percentage: 25
-        check_interval: 5s
-      k8sattributes:
-        auth_type: "serviceAccount"
-        passthrough: false
-        filter:
-          node_from_env_var: KUBE_NODE_NAME
-        extract:
-          metadata:
-            - k8s.pod.name
-            - k8s.pod.uid
-            - k8s.deployment.name
-            - k8s.namespace.name
-            - k8s.node.name
-            - k8s.pod.start_time
-        pod_association:
-          - sources:
-            - from: resource_attribute
-              name: k8s.pod.ip
-          - sources:
-            - from: resource_attribute
-              name: k8s.pod.uid
-          - sources:
-            - from: connection
+        check_interval: 1s
+        limit_mib: 1024
+        spike_limit_mib: 128
 
     exporters:
-      # Debug exporters (keep these for troubleshooting)
-      debug:
-        verbosity: detailed
-      
-      # OTLP exporter for traces to Jaeger
-      otlp/jaeger:
-        endpoint: "jaeger-collector.observability.svc.cluster.local:4317"
-        
+      jaeger:
+        endpoint: "jaeger-collector:14250"
         tls:
           insecure: true
-      
-      # Prometheus exporter for metrics
       prometheus:
         endpoint: "0.0.0.0:8889"
-        
-      # OpenSearch exporter for logs (if you have it)
-      opensearch:
-        logs_index: otel-logs
-        http:
-          endpoint: "https://opensearch.observability.svc.cluster.local:9200"
-          tls:
-            insecure_skip_verify: true
+      otlp/elastic:
+        endpoint: "opensearch:9200"
+        tls:
+          insecure: true
+        headers:
+          Authorization: "Basic ${OPENSEARCH_AUTH}"
 
-    extensions:
-      health_check:
-        endpoint: 0.0.0.0:13133
-      
     service:
-      extensions: [health_check]
       pipelines:
         traces:
-          receivers: [otlp, jaeger]
-          processors: [memory_limiter, k8sattributes]
-          exporters: [otlp/jaeger, debug]  # Using OTLP exporter for Jaeger
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [jaeger, otlp/elastic]
         metrics:
-          receivers: [otlp, httpcheck/store-front]
-          processors: [memory_limiter, k8sattributes]
-          exporters: [prometheus, debug]
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [prometheus, otlp/elastic]
         logs:
           receivers: [otlp]
-          processors: [memory_limiter, k8sattributes]
-          exporters: [opensearch, debug]  # Adjust based on your log backend
----
+          processors: [memory_limiter, batch]
+          exporters: [otlp/elastic]
 
+---
+# Jaeger Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jaeger
+spec:
+  selector:
+    matchLabels:
+      app: jaeger
+  template:
+    metadata:
+      labels:
+        app: jaeger
+    spec:
+      containers:
+        - name: jaeger
+          image: jaegertracing/all-in-one:1.45
+          ports:
+            - containerPort: 16686 # UI
+            - containerPort: 14250 # Collector gRPC
+          resources:
+            limits:
+              memory: 512Mi
+              cpu: 500m
+            requests:
+              memory: 256Mi
+              cpu: 100m
+
+---
+# Jaeger Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger
+spec:
+  selector:
+    app: jaeger
+  ports:
+    - name: query-http
+      port: 16686
+      targetPort: 16686
+    - name: collector-grpc
+      port: 14250
+      targetPort: 14250
+  type: LoadBalancer
+
+---
+# OpenTelemetry Collector Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+spec:
+  selector:
+    matchLabels:
+      app: otel-collector
+  template:
+    metadata:
+      labels:
+        app: otel-collector
+    spec:
+      containers:
+        - name: otel-collector
+          image: otel/opentelemetry-collector-contrib:0.96.0
+          ports:
+            - containerPort: 4317 # OTLP gRPC
+            - containerPort: 4318 # OTLP HTTP
+            - containerPort: 8889 # Prometheus metrics
+          volumeMounts:
+            - name: otel-collector-config
+              mountPath: /etc/otel-collector-config.yaml
+              subPath: otel-collector-config.yaml
+          env:
+            - name: OPENSEARCH_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: opensearch-credentials
+                  key: auth
+          resources:
+            limits:
+              cpu: 1
+              memory: 2Gi
+            requests:
+              cpu: 200m
+              memory: 400Mi
+      volumes:
+        - name: otel-collector-config
+          configMap:
+            name: otel-collector-config
+
+---
+# OpenTelemetry Collector Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+spec:
+  selector:
+    app: otel-collector
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+    - name: prometheus-metrics
+      port: 8889
+      targetPort: 8889
+
+---
+# Prometheus Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.50.0
+          args:
+            - "--config.file=/etc/prometheus/prometheus.yml"
+            - "--storage.tsdb.path=/prometheus"
+          ports:
+            - containerPort: 9090
+          volumeMounts:
+            - name: prometheus-config
+              mountPath: /etc/prometheus/prometheus.yml
+              subPath: prometheus.yml
+          resources:
+            limits:
+              memory: 512Mi
+              cpu: 500m
+            requests:
+              memory: 256Mi
+              cpu: 100m
+      volumes:
+        - name: prometheus-config
+          configMap:
+            name: prometheus-config
+
+---
+# Prometheus ConfigMap
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  labels:
-    app.kubernetes.io/component: server
-    app.kubernetes.io/name: prometheus
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: v3.1.0
-    app.kubernetes.io/part-of: prometheus
-  name: prometheus
-  namespace: otel-demo
+  name: prometheus-config
 data:
-  allow-snippet-annotations: "false"
-  alerting_rules.yml: |
-    {}
-  alerts: |
-    {}
   prometheus.yml: |
     global:
-      evaluation_interval: 30s
-      scrape_interval: 5s
-      scrape_timeout: 3s
-    storage:
-      tsdb:
-        out_of_order_time_window: 30m
-    rule_files:
-    - /etc/config/recording_rules.yml
-    - /etc/config/alerting_rules.yml
-    - /etc/config/rules
-    - /etc/config/alerts
+      scrape_interval: 15s
     scrape_configs:
-    - job_name: prometheus
-      static_configs:
-      - targets:
-        - localhost:9090
-    - bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
-      job_name: kubernetes-apiservers
-      kubernetes_sd_configs:
-      - role: endpoints
-      relabel_configs:
-      - action: keep
-        regex: default;kubernetes;https
-        source_labels:
-        - __meta_kubernetes_namespace
-        - __meta_kubernetes_service_name
-        - __meta_kubernetes_endpoint_port_name
-      scheme: https
-      tls_config:
-        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-    - bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
-      job_name: kubernetes-nodes
-      kubernetes_sd_configs:
-      - role: node
-      relabel_configs:
-      - action: labelmap
-        regex: __meta_kubernetes_node_label_(.+)
-      - replacement: kubernetes.default.svc:443
-        target_label: __address__
-      - regex: (.+)
-        replacement: /api/v1/nodes/$1/proxy/metrics
-        source_labels:
-        - __meta_kubernetes_node_name
-        target_label: __metrics_path__
-      scheme: https
-      tls_config:
-        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-    - bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
-      job_name: kubernetes-nodes-cadvisor
-      kubernetes_sd_configs:
-      - role: node
-      relabel_configs:
-      - action: labelmap
-        regex: __meta_kubernetes_node_label_(.+)
-      - replacement: kubernetes.default.svc:443
-        target_label: __address__
-      - regex: (.+)
-        replacement: /api/v1/nodes/$1/proxy/metrics/cadvisor
-        source_labels:
-        - __meta_kubernetes_node_name
-        target_label: __metrics_path__
-      scheme: https
-      tls_config:
-        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-    - honor_labels: true
-      job_name: kubernetes-service-endpoints
-      kubernetes_sd_configs:
-      - role: endpoints
-      relabel_configs:
-      - action: keep
-        regex: true
-        source_labels:
-        - __meta_kubernetes_service_annotation_prometheus_io_scrape
-      - action: drop
-        regex: true
-        source_labels:
-        - __meta_kubernetes_service_annotation_prometheus_io_scrape_slow
-      - action: replace
-        regex: (https?)
-        source_labels:
-        - __meta_kubernetes_service_annotation_prometheus_io_scheme
-        target_label: __scheme__
-      - action: replace
-        regex: (.+)
-        source_labels:
-        - __meta_kubernetes_service_annotation_prometheus_io_path
-        target_label: __metrics_path__
-      - action: replace
-        regex: (.+?)(?::\d+)?;(\d+)
-        replacement: $1:$2
-        source_labels:
-        - __address__
-        - __meta_kubernetes_service_annotation_prometheus_io_port
-        target_label: __address__
-      - action: labelmap
-        regex: __meta_kubernetes_service_annotation_prometheus_io_param_(.+)
-        replacement: __param_$1
-      - action: labelmap
-        regex: __meta_kubernetes_service_label_(.+)
-      - action: replace
-        source_labels:
-        - __meta_kubernetes_namespace
-        target_label: namespace
-      - action: replace
-        source_labels:
-        - __meta_kubernetes_service_name
-        target_label: service
-      - action: replace
-        source_labels:
-        - __meta_kubernetes_pod_node_name
-        target_label: node
-    - honor_labels: true
-      job_name: kubernetes-service-endpoints-slow
-      kubernetes_sd_configs:
-      - role: endpoints
-      relabel_configs:
-      - action: keep
-        regex: true
-        source_labels:
-        - __meta_kubernetes_service_annotation_prometheus_io_scrape_slow
-      - action: replace
-        regex: (https?)
-        source_labels:
-        - __meta_kubernetes_service_annotation_prometheus_io_scheme
-        target_label: __scheme__
-      - action: replace
-        regex: (.+)
-        source_labels:
-        - __meta_kubernetes_service_annotation_prometheus_io_path
-        target_label: __metrics_path__
-      - action: replace
-        regex: (.+?)(?::\d+)?;(\d+)
-        replacement: $1:$2
-        source_labels:
-        - __address__
-        - __meta_kubernetes_service_annotation_prometheus_io_port
-        target_label: __address__
-      - action: labelmap
-        regex: __meta_kubernetes_service_annotation_prometheus_io_param_(.+)
-        replacement: __param_$1
-      - action: labelmap
-        regex: __meta_kubernetes_service_label_(.+)
-      - action: replace
-        source_labels:
-        - __meta_kubernetes_namespace
-        target_label: namespace
-      - action: replace
-        source_labels:
-        - __meta_kubernetes_service_name
-        target_label: service
-      - action: replace
-        source_labels:
-        - __meta_kubernetes_pod_node_name
-        target_label: node
-      scrape_interval: 5m
-      scrape_timeout: 30s
-    - honor_labels: true
-      job_name: prometheus-pushgateway
-      kubernetes_sd_configs:
-      - role: service
-      relabel_configs:
-      - action: keep
-        regex: pushgateway
-        source_labels:
-        - __meta_kubernetes_service_annotation_prometheus_io_probe
-    - honor_labels: true
-      job_name: kubernetes-services
-      kubernetes_sd_configs:
-      - role: service
-      metrics_path: /probe
-      params:
-        module:
-        - http_2xx
-      relabel_configs:
-      - action: keep
-        regex: true
-        source_labels:
-        - __meta_kubernetes_service_annotation_prometheus_io_probe
-      - source_labels:
-        - __address__
-        target_label: __param_target
-      - replacement: blackbox
-        target_label: __address__
-      - source_labels:
-        - __param_target
-        target_label: instance
-      - action: labelmap
-        regex: __meta_kubernetes_service_label_(.+)
-      - source_labels:
-        - __meta_kubernetes_namespace
-        target_label: namespace
-      - source_labels:
-        - __meta_kubernetes_service_name
-        target_label: service
-    - honor_labels: true
-      job_name: kubernetes-pods
-      kubernetes_sd_configs:
-      - role: pod
-      relabel_configs:
-      - action: keep
-        regex: true
-        source_labels:
-        - __meta_kubernetes_pod_annotation_prometheus_io_scrape
-      - action: drop
-        regex: true
-        source_labels:
-        - __meta_kubernetes_pod_annotation_prometheus_io_scrape_slow
-      - action: replace
-        regex: (https?)
-        source_labels:
-        - __meta_kubernetes_pod_annotation_prometheus_io_scheme
-        target_label: __scheme__
-      - action: replace
-        regex: (.+)
-        source_labels:
-        - __meta_kubernetes_pod_annotation_prometheus_io_path
-        target_label: __metrics_path__
-      - action: replace
-        regex: (\d+);(([A-Fa-f0-9]{1,4}::?){1,7}[A-Fa-f0-9]{1,4})
-        replacement: '[$2]:$1'
-        source_labels:
-        - __meta_kubernetes_pod_annotation_prometheus_io_port
-        - __meta_kubernetes_pod_ip
-        target_label: __address__
-      - action: replace
-        regex: (\d+);((([0-9]+?)(\.|$)){4})
-        replacement: $2:$1
-        source_labels:
-        - __meta_kubernetes_pod_annotation_prometheus_io_port
-        - __meta_kubernetes_pod_ip
-        target_label: __address__
-      - action: labelmap
-        regex: __meta_kubernetes_pod_annotation_prometheus_io_param_(.+)
-        replacement: __param_$1
-      - action: labelmap
-        regex: __meta_kubernetes_pod_label_(.+)
-      - action: replace
-        source_labels:
-        - __meta_kubernetes_namespace
-        target_label: namespace
-      - action: replace
-        source_labels:
-        - __meta_kubernetes_pod_name
-        target_label: pod
-      - action: drop
-        regex: Pending|Succeeded|Failed|Completed
-        source_labels:
-        - __meta_kubernetes_pod_phase
-      - action: replace
-        source_labels:
-        - __meta_kubernetes_pod_node_name
-        target_label: node
-    - honor_labels: true
-      job_name: kubernetes-pods-slow
-      kubernetes_sd_configs:
-      - role: pod
-      relabel_configs:
-      - action: keep
-        regex: true
-        source_labels:
-        - __meta_kubernetes_pod_annotation_prometheus_io_scrape_slow
-      - action: replace
-        regex: (https?)
-        source_labels:
-        - __meta_kubernetes_pod_annotation_prometheus_io_scheme
-        target_label: __scheme__
-      - action: replace
-        regex: (.+)
-        source_labels:
-        - __meta_kubernetes_pod_annotation_prometheus_io_path
-        target_label: __metrics_path__
-      - action: replace
-        regex: (\d+);(([A-Fa-f0-9]{1,4}::?){1,7}[A-Fa-f0-9]{1,4})
-        replacement: '[$2]:$1'
-        source_labels:
-        - __meta_kubernetes_pod_annotation_prometheus_io_port
-        - __meta_kubernetes_pod_ip
-        target_label: __address__
-      - action: replace
-        regex: (\d+);((([0-9]+?)(\.|$)){4})
-        replacement: $2:$1
-        source_labels:
-        - __meta_kubernetes_pod_annotation_prometheus_io_port
-        - __meta_kubernetes_pod_ip
-        target_label: __address__
-      - action: labelmap
-        regex: __meta_kubernetes_pod_annotation_prometheus_io_param_(.+)
-        replacement: __param_$1
-      - action: labelmap
-        regex: __meta_kubernetes_pod_label_(.+)
-      - action: replace
-        source_labels:
-        - __meta_kubernetes_namespace
-        target_label: namespace
-      - action: replace
-        source_labels:
-        - __meta_kubernetes_pod_name
-        target_label: pod
-      - action: drop
-        regex: Pending|Succeeded|Failed|Completed
-        source_labels:
-        - __meta_kubernetes_pod_phase
-      - action: replace
-        source_labels:
-        - __meta_kubernetes_pod_node_name
-        target_label: node
-      scrape_interval: 5m
-      scrape_timeout: 30s
-  recording_rules.yml: |
-    {}
-  rules: |
-    {}
+      - job_name: 'otel-collector'
+        static_configs:
+          - targets: ['otel-collector:8889']
+
 ---
+# Prometheus Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+spec:
+  selector:
+    app: prometheus
+  ports:
+    - port: 9090
+      targetPort: 9090
+  type: LoadBalancer
+
+---
+# Grafana Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+spec:
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:10.3.0
+          ports:
+            - containerPort: 3000
+          env:
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              value: "admin"
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "true"
+          volumeMounts:
+            - name: grafana-datasources
+              mountPath: /etc/grafana/provisioning/datasources
+            - name: grafana-dashboards
+              mountPath: /etc/grafana/provisioning/dashboards
+          resources:
+            limits:
+              memory: 512Mi
+              cpu: 500m
+            requests:
+              memory: 256Mi
+              cpu: 100m
+      volumes:
+        - name: grafana-datasources
+          configMap:
+            name: grafana-datasources
+        - name: grafana-dashboards
+          configMap:
+            name: grafana-dashboards
+
+---
+# Grafana Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+spec:
+  selector:
+    app: grafana
+  ports:
+    - port: 3000
+      targetPort: 3000
+  type: LoadBalancer
+
+---
+# Grafana ConfigMap for Datasources
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: grafana-dashboards
-  namespace: otel-demo
-  labels:
-    
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: "2.0.2"
-    app.kubernetes.io/part-of: store-demo
+  name: grafana-datasources
 data:
-  
-  demo-dashboard.json: |-
-    {
-      "annotations": {
-        "list": [
-          {
-            "builtIn": 1,
-            "datasource": {
-              "type": "grafana",
-              "uid": "-- Grafana --"
-            },
-            "enable": true,
-            "hide": true,
-            "iconColor": "rgba(0, 211, 255, 1)",
-            "name": "Annotations & Alerts",
-            "target": {
-              "limit": 100,
-              "matchAny": false,
-              "tags": [],
-              "type": "dashboard"
-            },
-            "type": "dashboard"
-          }
-        ]
-      },
-      "editable": true,
-      "fiscalYearStartMonth": 0,
-      "graphTooltip": 1,
-      "id": 2,
-      "links": [],
-      "panels": [
-        {
-          "fieldConfig": {
-            "defaults": {},
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 3,
-            "w": 24,
-            "x": 0,
-            "y": 0
-          },
-          "id": 21,
-          "options": {
-            "code": {
-              "language": "plaintext",
-              "showLineNumbers": false,
-              "showMiniMap": false
-            },
-            "content": "This dashboard shows RED metrics for the selected service, as generated by the spanmetrics connector in the OpenTelemetry Collector.\nIf the selected service emits logs, the logs will also be displayed.\nCustom metrics generated by some services are also displayed. \n<br/>\nChart panels may require 5 minutes after the Demo is started before rendering data.",
-            "mode": "html"
-          },
-          "pluginVersion": "11.5.2",
-          "title": "",
-          "type": "text"
-        },
-        {
-          "collapsed": false,
-          "gridPos": {
-            "h": 1,
-            "w": 24,
-            "x": 0,
-            "y": 3
-          },
-          "id": 14,
-          "panels": [],
-          "title": "Spanmetrics (RED metrics)",
-          "type": "row"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "webstore-metrics"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "barWidthFactor": 0.6,
-                "drawStyle": "line",
-                "fillOpacity": 0,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": null
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              },
-              "unit": "reqps"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 8,
-            "x": 0,
-            "y": 4
-          },
-          "id": 12,
-          "interval": "2m",
-          "options": {
-            "legend": {
-              "calcs": [],
-              "displayMode": "list",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "hideZeros": false,
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "pluginVersion": "11.5.2",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "webstore-metrics"
-              },
-              "editorMode": "code",
-              "expr": "sum by (span_name) (rate(traces_span_metrics_duration_milliseconds_count{service_name=\"${service}\"}[$__rate_interval]))",
-              "legendFormat": "{{ span_name }}",
-              "range": true,
-              "refId": "A"
-            }
-          ],
-          "title": "Requests Rate by Span Name",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "webstore-metrics"
-          },
-          "description": "",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "barWidthFactor": 0.6,
-                "drawStyle": "line",
-                "fillOpacity": 0,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": null
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              }
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 8,
-            "x": 8,
-            "y": 4
-          },
-          "id": 10,
-          "interval": "2m",
-          "options": {
-            "legend": {
-              "calcs": [],
-              "displayMode": "list",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "hideZeros": false,
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "pluginVersion": "11.5.2",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "webstore-metrics"
-              },
-              "editorMode": "code",
-              "expr": "sum by (span_name) (rate(traces_span_metrics_calls_total{status_code=\"STATUS_CODE_ERROR\", service_name=\"${service}\"}[$__rate_interval]))",
-              "interval": "",
-              "legendFormat": "{{ span_name }}",
-              "range": true,
-              "refId": "A"
-            }
-          ],
-          "title": "Error Rate by Span Name",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "webstore-metrics"
-          },
-          "description": "",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "barWidthFactor": 0.6,
-                "drawStyle": "line",
-                "fillOpacity": 0,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": null
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              },
-              "unit": "dtdurationms"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 8,
-            "x": 16,
-            "y": 4
-          },
-          "id": 2,
-          "interval": "2m",
-          "options": {
-            "legend": {
-              "calcs": [],
-              "displayMode": "list",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "hideZeros": false,
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "pluginVersion": "11.5.2",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "webstore-metrics"
-              },
-              "editorMode": "code",
-              "exemplar": false,
-              "expr": "histogram_quantile(0.50, sum(rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"${service}\"}[$__rate_interval])) by (le, span_name))",
-              "legendFormat": "{{span_name}}",
-              "range": true,
-              "refId": "A"
-            }
-          ],
-          "title": "Average Duration by Span Name",
-          "type": "timeseries"
-        },
-        {
-          "collapsed": false,
-          "gridPos": {
-            "h": 1,
-            "w": 24,
-            "x": 0,
-            "y": 12
-          },
-          "id": 19,
-          "panels": [],
-          "title": "Application Log Records",
-          "type": "row"
-        },
-        {
-          "datasource": {
-            "type": "grafana-opensearch-datasource",
-            "uid": "webstore-logs"
-          },
-          "description": "",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "thresholds"
-              },
-              "custom": {
-                "align": "left",
-                "cellOptions": {
-                  "type": "auto"
-                },
-                "inspect": false
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": null
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              }
-            },
-            "overrides": [
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "count()"
-                },
-                "properties": [
-                  {
-                    "id": "custom.width",
-                    "value": 90
-                  }
-                ]
-              }
-            ]
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 4,
-            "x": 0,
-            "y": 13
-          },
-          "id": 20,
-          "options": {
-            "cellHeight": "sm",
-            "footer": {
-              "countRows": false,
-              "fields": "",
-              "reducer": [
-                "sum"
-              ],
-              "show": false
-            },
-            "showHeader": true
-          },
-          "pluginVersion": "11.5.2",
-          "targets": [
-            {
-              "alias": "",
-              "bucketAggs": [
-                {
-                  "field": "severity.text.keyword",
-                  "id": "3",
-                  "settings": {
-                    "min_doc_count": "1",
-                    "order": "desc",
-                    "orderBy": "_count",
-                    "size": "0"
-                  },
-                  "type": "terms"
-                }
-              ],
-              "datasource": {
-                "type": "grafana-opensearch-datasource",
-                "uid": "webstore-logs"
-              },
-              "format": "table",
-              "metrics": [
-                {
-                  "id": "1",
-                  "type": "count"
-                }
-              ],
-              "query": "search source=otel\n| where resource.service.name=\"${service}\"\n| stats count() by severity.text",
-              "queryType": "PPL",
-              "refId": "A",
-              "timeField": "observedTimestamp"
-            }
-          ],
-          "title": "Log Records by Severity",
-          "transformations": [
-            {
-              "id": "organize",
-              "options": {
-                "excludeByName": {},
-                "includeByName": {},
-                "indexByName": {},
-                "renameByName": {
-                  "Count": "",
-                  "severity.text.keyword": "Severity"
-                }
-              }
-            }
-          ],
-          "type": "table"
-        },
-        {
-          "datasource": {
-            "type": "grafana-opensearch-datasource",
-            "uid": "webstore-logs"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "thresholds"
-              },
-              "custom": {
-                "align": "auto",
-                "cellOptions": {
-                  "type": "auto",
-                  "wrapText": false
-                },
-                "filterable": true,
-                "inspect": true
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": null
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              }
-            },
-            "overrides": [
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "observedTimestamp"
-                },
-                "properties": []
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "body"
-                },
-                "properties": [
-                  {
-                    "id": "custom.width",
-                    "value": 386
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "severity.text"
-                },
-                "properties": [
-                  {
-                    "id": "custom.width",
-                    "value": 127
-                  }
-                ]
-              }
-            ]
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 20,
-            "x": 4,
-            "y": 13
-          },
-          "id": 17,
-          "options": {
-            "cellHeight": "sm",
-            "footer": {
-              "countRows": false,
-              "fields": "",
-              "reducer": [
-                "sum"
-              ],
-              "show": false
-            },
-            "showHeader": true,
-            "sortBy": []
-          },
-          "pluginVersion": "11.5.2",
-          "targets": [
-            {
-              "alias": "",
-              "bucketAggs": [],
-              "datasource": {
-                "type": "grafana-opensearch-datasource",
-                "uid": "webstore-logs"
-              },
-              "format": "table",
-              "hide": false,
-              "metrics": [
-                {
-                  "id": "1",
-                  "settings": {
-                    "order": "desc",
-                    "size": "100",
-                    "useTimeRange": true
-                  },
-                  "type": "raw_data"
-                }
-              ],
-              "query": "search source=otel\n| where resource.service.name=\"${service}\"\n| sort - observedTimestamp \n| head 100",
-              "queryType": "PPL",
-              "refId": "A",
-              "timeField": "observedTimestamp"
-            }
-          ],
-          "title": "Log Records (100 recent entries)",
-          "transformations": [
-            {
-              "id": "organize",
-              "options": {
-                "excludeByName": {
-                  "@timestamp": true
-                },
-                "includeByName": {},
-                "indexByName": {
-                  "@timestamp": 1,
-                  "attributes.data_stream.dataset": 4,
-                  "attributes.data_stream.namespace": 5,
-                  "attributes.data_stream.type": 6,
-                  "attributes.productId": 7,
-                  "attributes.quantity": 8,
-                  "attributes.userId": 9,
-                  "body": 3,
-                  "instrumentationScope.name": 10,
-                  "observedTimestamp": 0,
-                  "resource.container.id": 11,
-                  "resource.docker.cli.cobra.command_path": 12,
-                  "resource.host.name": 13,
-                  "resource.service.name": 14,
-                  "resource.telemetry.sdk.language": 15,
-                  "resource.telemetry.sdk.name": 16,
-                  "resource.telemetry.sdk.version": 17,
-                  "severity.number": 18,
-                  "severity.text": 2,
-                  "spanId": 19,
-                  "traceId": 20
-                },
-                "renameByName": {}
-              }
-            }
-          ],
-          "type": "table"
-        },
-        {
-          "collapsed": false,
-          "gridPos": {
-            "h": 1,
-            "w": 24,
-            "x": 0,
-            "y": 21
-          },
-          "id": 18,
-          "panels": [],
-          "title": "Application Metrics",
-          "type": "row"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "webstore-metrics"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "barWidthFactor": 0.6,
-                "drawStyle": "line",
-                "fillOpacity": 0,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": null
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              },
-              "unit": "percent"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 0,
-            "y": 22
-          },
-          "id": 6,
-          "options": {
-            "legend": {
-              "calcs": [],
-              "displayMode": "list",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "hideZeros": false,
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "pluginVersion": "11.5.2",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "webstore-metrics"
-              },
-              "editorMode": "code",
-              "expr": "rate(process_runtime_cpython_cpu_time_seconds_total{type=~\"system\"}[$__rate_interval])*100",
-              "hide": false,
-              "interval": "2m",
-              "legendFormat": "{{job}} ({{type}})",
-              "range": true,
-              "refId": "A"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "webstore-metrics"
-              },
-              "editorMode": "code",
-              "expr": "rate(process_runtime_cpython_cpu_time_seconds_total{type=~\"user\"}[$__rate_interval])*100",
-              "hide": false,
-              "interval": "2m",
-              "legendFormat": "{{job}} ({{type}})",
-              "range": true,
-              "refId": "B"
-            }
-          ],
-          "title": "Python services (CPU%)",
-          "transformations": [
-            {
-              "id": "renameByRegex",
-              "options": {
-                "regex": "store-demo/(.*)",
-                "renamePattern": "$1"
-              }
-            }
-          ],
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "webstore-metrics"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "barWidthFactor": 0.6,
-                "drawStyle": "line",
-                "fillOpacity": 0,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": null
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              },
-              "unit": "bytes"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 12,
-            "y": 22
-          },
-          "id": 8,
-          "options": {
-            "legend": {
-              "calcs": [],
-              "displayMode": "list",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "hideZeros": false,
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "pluginVersion": "11.5.2",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "webstore-metrics"
-              },
-              "editorMode": "code",
-              "expr": "process_runtime_cpython_memory_bytes{type=\"rss\"}",
-              "legendFormat": "{{job}}",
-              "range": true,
-              "refId": "A"
-            }
-          ],
-          "title": "Python services (Memory)",
-          "transformations": [
-            {
-              "id": "renameByRegex",
-              "options": {
-                "regex": "store-demo/(.*)",
-                "renamePattern": "$1"
-              }
-            }
-          ],
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "webstore-metrics"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "barWidthFactor": 0.6,
-                "drawStyle": "line",
-                "fillOpacity": 0,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": null
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              }
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 0,
-            "y": 30
-          },
-          "id": 4,
-          "options": {
-            "legend": {
-              "calcs": [],
-              "displayMode": "list",
-              "placement": "bottom",
-              "showLegend": false
-            },
-            "tooltip": {
-              "hideZeros": false,
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "pluginVersion": "11.5.2",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "webstore-metrics"
-              },
-              "editorMode": "code",
-              "expr": "rate(app_recommendations_counter_total{recommendation_type=\"catalog\"}[$__rate_interval])",
-              "interval": "2m",
-              "legendFormat": "recommendations",
-              "range": true,
-              "refId": "A"
-            }
-          ],
-          "title": "Recommendations Rate",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "webstore-metrics"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "barWidthFactor": 0.6,
-                "drawStyle": "line",
-                "fillOpacity": 0,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": null
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              }
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 12,
-            "y": 30
-          },
-          "id": 16,
-          "interval": "2m",
-          "options": {
-            "legend": {
-              "calcs": [],
-              "displayMode": "list",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "hideZeros": false,
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "pluginVersion": "11.5.2",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "webstore-metrics"
-              },
-              "editorMode": "code",
-              "expr": "rate(otel_trace_span_processor_spans{job=\"quote\"}[2m])*120",
-              "interval": "2m",
-              "legendFormat": "{{state}}",
-              "range": true,
-              "refId": "A"
-            }
-          ],
-          "title": "Quote Service batch span processor",
-          "type": "timeseries"
-        },
-        {
-          "collapsed": false,
-          "gridPos": {
-            "h": 1,
-            "w": 24,
-            "x": 0,
-            "y": 38
-          },
-          "id": 23,
-          "panels": [],
-          "title": "Service Dependency",
-          "type": "row"
-        },
-        {
-          "datasource": {
-            "type": "jaeger",
-            "uid": "webstore-traces"
-          },
-          "fieldConfig": {
-            "defaults": {},
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 18,
-            "w": 24,
-            "x": 0,
-            "y": 39
-          },
-          "id": 22,
-          "options": {
-            "edges": {
-              "mainStatUnit": "requests"
-            },
-            "nodes": {
-              "arcs": [],
-              "mainStatUnit": ""
-            },
-            "zoomMode": "cooperative"
-          },
-          "pluginVersion": "11.5.2",
-          "targets": [
-            {
-              "datasource": {
-                "type": "jaeger",
-                "uid": "webstore-traces"
-              },
-              "queryType": "dependencyGraph",
-              "refId": "A"
-            }
-          ],
-          "title": "Service Dependency",
-          "type": "nodeGraph"
-        }
-      ],
-      "preload": false,
-      "refresh": "",
-      "schemaVersion": 40,
-      "tags": [],
-      "templating": {
-        "list": [
-          {
-            "current": {
-              "text": "frontend",
-              "value": "frontend"
-            },
-            "datasource": {
-              "type": "prometheus",
-              "uid": "webstore-metrics"
-            },
-            "definition": "traces_span_metrics_duration_milliseconds_bucket",
-            "includeAll": false,
-            "label": "Service",
-            "name": "service",
-            "options": [],
-            "query": {
-              "query": "traces_span_metrics_duration_milliseconds_bucket",
-              "refId": "PrometheusVariableQueryEditor-VariableQuery"
-            },
-            "refresh": 1,
-            "regex": "/.*service.name=\\\"([^\\\"]+)\\\".*/",
-            "sort": 1,
-            "type": "query"
-          }
-        ]
-      },
-      "time": {
-        "from": "now-15m",
-        "to": "now"
-      },
-      "timepicker": {},
-      "timezone": "",
-      "title": "Demo Dashboard",
-      "uid": "W2gX2zHVk",
-      "version": 2,
-      "weekStart": ""
-    }
-  exemplars-dashboard.json: |-
-    {
-      "annotations": {
-        "list": [
-          {
-            "builtIn": 1,
-            "datasource": {
-              "type": "grafana",
-              "uid": "-- Grafana --"
-            },
-            "enable": true,
-            "hide": true,
-            "iconColor": "rgba(0, 211, 255, 1)",
-            "name": "Annotations & Alerts",
-            "type": "dashboard"
-          }
-        ]
-      },
-      "editable": true,
-      "fiscalYearStartMonth": 0,
-      "graphTooltip": 0,
-      "id": 5,
-      "links": [],
-      "panels": [
-        {
-          "fieldConfig": {
-            "defaults": {},
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 2,
-            "w": 24,
-            "x": 0,
-            "y": 0
-          },
-          "id": 8,
-          "options": {
-            "code": {
-              "language": "plaintext",
-              "showLineNumbers": false,
-              "showMiniMap": false
-            },
-            "content": "This dashboard shows the use of metric exemplars.\nExemplars can be used to look up a trace in Jaeger.\nOnly the most recent exemplars may still be available in Jaeger.\n<br>\nChart panels may require 5 minutes after the Demo is started before rendering data.",
-            "mode": "html"
-          },
-          "pluginVersion": "11.4.0",
-          "title": "",
-          "type": "text"
-        },
-        {
-          "collapsed": false,
-          "gridPos": {
-            "h": 1,
-            "w": 24,
-            "x": 0,
-            "y": 2
-          },
-          "id": 4,
-          "panels": [],
-          "title": "GetCart Exemplars",
-          "type": "row"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "webstore-metrics"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "custom": {
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "scaleDistribution": {
-                  "type": "linear"
-                }
-              }
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 9,
-            "w": 24,
-            "x": 0,
-            "y": 3
-          },
-          "id": 2,
-          "interval": "2m",
-          "options": {
-            "calculate": false,
-            "cellGap": 1,
-            "color": {
-              "exponent": 0.5,
-              "fill": "dark-orange",
-              "mode": "scheme",
-              "reverse": false,
-              "scale": "exponential",
-              "scheme": "Spectral",
-              "steps": 64
-            },
-            "exemplars": {
-              "color": "rgba(255,0,255,0.7)"
-            },
-            "filterValues": {
-              "le": 1e-9
-            },
-            "legend": {
-              "show": true
-            },
-            "rowsFrame": {
-              "layout": "auto"
-            },
-            "tooltip": {
-              "mode": "single",
-              "showColorScale": false,
-              "yHistogram": false
-            },
-            "yAxis": {
-              "axisPlacement": "left",
-              "reverse": false
-            }
-          },
-          "pluginVersion": "11.4.0",
-          "targets": [
-            {
-              "disableTextWrap": false,
-              "editorMode": "builder",
-              "exemplar": true,
-              "expr": "sum by(le) (rate(app_cart_get_cart_latency_bucket[$__rate_interval]))",
-              "format": "heatmap",
-              "fullMetaSearch": false,
-              "includeNullMetadata": false,
-              "instant": true,
-              "legendFormat": "{{le}}",
-              "range": true,
-              "refId": "A",
-              "useBackend": false
-            }
-          ],
-          "title": "GetCart Latency Heatmap with Exemplars",
-          "type": "heatmap"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "webstore-metrics"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "barWidthFactor": 0.6,
-                "drawStyle": "line",
-                "fillOpacity": 0,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "auto",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": null
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              }
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 10,
-            "w": 24,
-            "x": 0,
-            "y": 12
-          },
-          "id": 5,
-          "interval": "2m",
-          "options": {
-            "legend": {
-              "calcs": [],
-              "displayMode": "list",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "pluginVersion": "11.4.0",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "webstore-metrics"
-              },
-              "disableTextWrap": false,
-              "editorMode": "builder",
-              "exemplar": true,
-              "expr": "histogram_quantile(0.95, sum by(le) (rate(app_cart_get_cart_latency_bucket[$__rate_interval])))",
-              "fullMetaSearch": false,
-              "includeNullMetadata": false,
-              "legendFormat": "p95 GetCart",
-              "range": true,
-              "refId": "A",
-              "useBackend": false
-            }
-          ],
-          "title": "95th Pct Cart GetCart Latency with Exemplars",
-          "type": "timeseries"
-        },
-        {
-          "collapsed": false,
-          "gridPos": {
-            "h": 1,
-            "w": 24,
-            "x": 0,
-            "y": 22
-          },
-          "id": 3,
-          "panels": [],
-          "title": "AddItem Exemplars",
-          "type": "row"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "webstore-metrics"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "custom": {
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "scaleDistribution": {
-                  "type": "linear"
-                }
-              }
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 9,
-            "w": 24,
-            "x": 0,
-            "y": 23
-          },
-          "id": 6,
-          "interval": "2m",
-          "options": {
-            "calculate": false,
-            "cellGap": 1,
-            "color": {
-              "exponent": 0.5,
-              "fill": "dark-orange",
-              "mode": "scheme",
-              "reverse": false,
-              "scale": "exponential",
-              "scheme": "Spectral",
-              "steps": 64
-            },
-            "exemplars": {
-              "color": "rgba(255,0,255,0.7)"
-            },
-            "filterValues": {
-              "le": 1e-9
-            },
-            "legend": {
-              "show": true
-            },
-            "rowsFrame": {
-              "layout": "auto"
-            },
-            "tooltip": {
-              "mode": "single",
-              "showColorScale": false,
-              "yHistogram": false
-            },
-            "yAxis": {
-              "axisPlacement": "left",
-              "reverse": false
-            }
-          },
-          "pluginVersion": "11.4.0",
-          "targets": [
-            {
-              "disableTextWrap": false,
-              "editorMode": "builder",
-              "exemplar": true,
-              "expr": "sum by(le) (rate(app_cart_add_item_latency_bucket[$__rate_interval]))",
-              "format": "heatmap",
-              "fullMetaSearch": false,
-              "includeNullMetadata": false,
-              "instant": true,
-              "legendFormat": "{{le}}",
-              "range": true,
-              "refId": "A",
-              "useBackend": false
-            }
-          ],
-          "title": "AddItem Latency Heatmap with Exemplars",
-          "type": "heatmap"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "webstore-metrics"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "barWidthFactor": 0.6,
-                "drawStyle": "line",
-                "fillOpacity": 0,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "auto",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green"
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              }
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 10,
-            "w": 24,
-            "x": 0,
-            "y": 32
-          },
-          "id": 1,
-          "interval": "2m",
-          "options": {
-            "legend": {
-              "calcs": [],
-              "displayMode": "list",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "pluginVersion": "11.4.0",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "webstore-metrics"
-              },
-              "disableTextWrap": false,
-              "editorMode": "builder",
-              "exemplar": true,
-              "expr": "histogram_quantile(0.95, sum by(le) (rate(app_cart_add_item_latency_bucket[$__rate_interval])))",
-              "fullMetaSearch": false,
-              "includeNullMetadata": false,
-              "legendFormat": "p95 AddItem",
-              "range": true,
-              "refId": "A",
-              "useBackend": false
-            }
-          ],
-          "title": "95th Pct Cart AddItem Latency with Exemplars",
-          "type": "timeseries"
-        }
-      ],
-      "preload": false,
-      "schemaVersion": 40,
-      "tags": [],
-      "templating": {
-        "list": []
-      },
-      "time": {
-        "from": "now-15m",
-        "to": "now"
-      },
-      "timepicker": {},
-      "timezone": "browser",
-      "title": "Cart Service Exemplars",
-      "uid": "ce6sd46kfkglca",
-      "version": 3,
-      "weekStart": ""
-    }
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus:9090
+        isDefault: true
+      - name: Jaeger
+        type: jaeger
+        access: proxy
+        url: http://jaeger:16686
+      - name: OpenSearch
+        type: elasticsearch
+        access: proxy
+        url: http://opensearch:9200
+        basicAuth: true
+        basicAuthUser: admin
+        jsonData:
+          esVersion: "8.0.0"
+          timeField: "@timestamp"
 
 ---
+# OpenSearch Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opensearch
+spec:
+  selector:
+    matchLabels:
+      app: opensearch
+  template:
+    metadata:
+      labels:
+        app: opensearch
+    spec:
+      containers:
+        - name: opensearch
+          image: opensearchproject/opensearch:2.11.0
+          env:
+            - name: discovery.type
+              value: single-node
+            - name: DISABLE_SECURITY_PLUGIN
+              value: "true"
+          ports:
+            - containerPort: 9200
+            - containerPort: 9600
+          resources:
+            limits:
+              memory: 2Gi
+              cpu: 1
+            requests:
+              memory: 1Gi
+              cpu: 500m
 
+---
+# OpenSearch Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: opensearch
+spec:
+  selector:
+    app: opensearch
+  ports:
+    - name: rest
+      port: 9200
+      targetPort: 9200
+    - name: inter-node
+      port: 9600
+      targetPort: 9600
+
+---
+# OpenSearch Credentials Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: opensearch-credentials
+type: Opaque
+data:
+  auth: YWRtaW46YWRtaW4=  # admin:admin in base64
+
+---
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -2484,7 +521,7 @@ spec:
         "kubernetes.io/os": linux
       containers:
         - name: order-service
-          image: ghcr.io/azure-samples/store-demo/order-service:latest
+          image: ghcr.io/azure-samples/aks-store-demo/order-service:latest
           ports:
             - containerPort: 3000
           env:
@@ -2501,7 +538,11 @@ spec:
             - name: FASTIFY_ADDRESS
               value: "0.0.0.0"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: "http://otel-collector.otel-demo:4318/v1/traces"
+              value: "http://otel-collector:4317"
+            - name: OTEL_SERVICE_NAME
+              value: "order-service"
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "service.version=1.0.0,deployment.environment=production"
           resources:
             requests:
               cpu: 1m
@@ -2574,7 +615,7 @@ spec:
         "kubernetes.io/os": linux
       containers:
         - name: makeline-service
-          image: ghcr.io/azure-samples/store-demo/makeline-service:latest
+          image: ghcr.io/azure-samples/aks-store-demo/makeline-service:latest
           ports:
             - containerPort: 3001
           env:
@@ -2593,7 +634,11 @@ spec:
             - name: ORDER_DB_COLLECTION_NAME
               value: "orders"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: "otel-collector.otel-demo:4317"
+              value: "http://otel-collector:4317"
+            - name: OTEL_SERVICE_NAME
+              value: "makeline-service"
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "service.version=1.0.0,deployment.environment=production"
           resources:
             requests:
               cpu: 1m
@@ -2653,14 +698,18 @@ spec:
         "kubernetes.io/os": linux
       containers:
         - name: product-service
-          image: ghcr.io/azure-samples/store-demo/product-service:latest
+          image: ghcr.io/azure-samples/aks-store-demo/product-service:latest
           ports:
             - containerPort: 3002
           env:
             - name: AI_SERVICE_URL
               value: "http://ai-service:5001/"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: "otel-collector.otel-demo:4317"
+              value: "http://otel-collector:4317"
+            - name: OTEL_SERVICE_NAME
+              value: "product-service"
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "service.version=1.0.0,deployment.environment=production"
           resources:
             requests:
               cpu: 1m
@@ -2714,13 +763,17 @@ spec:
         "kubernetes.io/os": linux
       containers:
         - name: store-front
-          image: ghcr.io/azure-samples/store-demo/store-front:latest
+          image: ghcr.io/azure-samples/aks-store-demo/store-front:latest
           ports:
             - containerPort: 8080
               name: store-front
           env:
-            - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: "http://otel-collector.otel-demo:4318/v1/traces"
+            - name: VITE_OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://otel-collector:4318/v1/traces"
+            - name: VITE_APP_VERSION
+              value: "1.0.0"
+            - name: VITE_ENVIRONMENT
+              value: "production"
           resources:
             requests:
               cpu: 1m
@@ -2780,13 +833,17 @@ spec:
         "kubernetes.io/os": linux
       containers:
         - name: store-admin
-          image: ghcr.io/azure-samples/store-demo/store-admin:latest
+          image: ghcr.io/azure-samples/aks-store-demo/store-admin:latest
           ports:
             - containerPort: 8081
               name: store-admin
           env:
-            - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: "http://otel-collector.otel-demo:4318/v1/traces"
+            - name: VITE_OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://otel-collector:4318/v1/traces"
+            - name: VITE_APP_VERSION
+              value: "1.0.0"
+            - name: VITE_ENVIRONMENT
+              value: "production"
           resources:
             requests:
               cpu: 1m
@@ -2846,14 +903,18 @@ spec:
         "kubernetes.io/os": linux
       containers:
         - name: virtual-customer
-          image: ghcr.io/azure-samples/store-demo/virtual-customer:latest
+          image: ghcr.io/azure-samples/aks-store-demo/virtual-customer:latest
           env:
             - name: ORDER_SERVICE_URL
               value: http://order-service:3000/
-            - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: "otel-collector.otel-demo:4317"
             - name: ORDERS_PER_HOUR
               value: "100"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://otel-collector:4317"
+            - name: OTEL_SERVICE_NAME
+              value: "virtual-customer"
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "service.version=1.0.0,deployment.environment=production"
           resources:
             requests:
               cpu: 1m
@@ -2880,12 +941,10 @@ spec:
         "kubernetes.io/os": linux
       containers:
         - name: virtual-worker
-          image: ghcr.io/azure-samples/store-demo/virtual-worker:latest
+          image: ghcr.io/azure-samples/aks-store-demo/virtual-worker:latest
           env:
             - name: MAKELINE_SERVICE_URL
               value: http://makeline-service:3001
-            - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: "otel-collector.otel-demo:4317"
             - name: ORDERS_PER_HOUR
               value: "100"
           resources:
@@ -2894,981 +953,4 @@ spec:
               memory: 1Mi
             limits:
               cpu: 2m
-              memory: 20Mi
----
-kind: ClusterRole
-apiVersion: rbac.authorization.k8s.io/v1
-metadata:
-  labels:
-    app.kubernetes.io/name: grafana
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: "11.5.2"
-  name: grafana-clusterrole
-rules: []
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: otel-collector
-  labels:
-    app.kubernetes.io/name: opentelemetry-collector
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: "0.120.0"
-    app.kubernetes.io/component: standalone-collector
-rules:
-  - apiGroups: [""]
-    resources: ["pods", "namespaces"]
-    verbs: ["get", "watch", "list"]
-  - apiGroups: ["apps"]
-    resources: ["replicasets"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["extensions"]
-    resources: ["replicasets"]
-    verbs: ["get", "list", "watch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  labels:
-    app.kubernetes.io/component: server
-    app.kubernetes.io/name: prometheus
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: v3.1.0
-    app.kubernetes.io/part-of: prometheus
-  name: prometheus
-rules:
-  - apiGroups:
-      - ""
-    resources:
-      - nodes
-      - nodes/proxy
-      - nodes/metrics
-      - services
-      - endpoints
-      - pods
-      - ingresses
-      - configmaps
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - "extensions"
-      - "networking.k8s.io"
-    resources:
-      - ingresses/status
-      - ingresses
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - "discovery.k8s.io"
-    resources:
-      - endpointslices
-    verbs:
-      - get
-      - list
-      - watch
-  - nonResourceURLs:
-      - "/metrics"
-    verbs:
-      - get
----
-kind: ClusterRoleBinding
-apiVersion: rbac.authorization.k8s.io/v1
-metadata:
-  name: grafana-clusterrolebinding
-  labels:
-    app.kubernetes.io/name: grafana
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: "11.5.2"
-subjects:
-  - kind: ServiceAccount
-    name: grafana
-    namespace: otel-demo
-roleRef:
-  kind: ClusterRole
-  name: grafana-clusterrole
-  apiGroup: rbac.authorization.k8s.io
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: otel-collector
-  labels:
-    app.kubernetes.io/name: opentelemetry-collector
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: "0.120.0"
-    app.kubernetes.io/component: standalone-collector
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: otel-collector
-subjects:
-- kind: ServiceAccount
-  name: otel-collector
-  namespace: otel-demo
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  labels:
-    app.kubernetes.io/component: server
-    app.kubernetes.io/name: prometheus
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: v3.1.0
-    app.kubernetes.io/part-of: prometheus
-  name: prometheus
-subjects:
-  - kind: ServiceAccount
-    name: prometheus
-    namespace: otel-demo
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: prometheus
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: grafana
-  namespace: otel-demo
-  labels:
-    app.kubernetes.io/name: grafana
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: "11.5.2"
-rules: []
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: grafana
-  namespace: otel-demo
-  labels:
-    app.kubernetes.io/name: grafana
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: "11.5.2"
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: grafana
-subjects:
-- kind: ServiceAccount
-  name: grafana
-  namespace: otel-demo
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: grafana
-  namespace: otel-demo
-  labels:
-    app.kubernetes.io/name: grafana
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: "11.5.2"
-spec:
-  type: ClusterIP
-  ports:
-    - name: service
-      port: 80
-      protocol: TCP
-      targetPort: 3000
-  selector:
-    app.kubernetes.io/name: grafana
-    app.kubernetes.io/instance: store-demo
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: jaeger-agent
-  labels:
-    app.kubernetes.io/name: jaeger
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: "1.53.0"
-    app.kubernetes.io/component: service-agent
-spec:
-  clusterIP: None
-  ports:
-    - name: zk-compact-trft
-      port: 5775
-      protocol: UDP
-      targetPort: 0
-    - name: config-rest
-      port: 5778
-      targetPort: 0
-    - name: jg-compact-trft
-      port: 6831
-      protocol: UDP
-      targetPort: 0
-    - name: jg-binary-trft
-      port: 6832
-      protocol: UDP
-      targetPort: 0
-  selector:
-    app.kubernetes.io/name: jaeger
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/component: all-in-one
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: jaeger-collector
-  labels:
-    app.kubernetes.io/name: jaeger
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: "1.53.0"
-    app.kubernetes.io/component: service-collector
-spec:
-  clusterIP: None
-  ports:
-    - name: http-zipkin
-      port: 9411
-      targetPort: 0
-      appProtocol: http
-    - name: grpc-http
-      port: 14250
-      targetPort: 0
-      appProtocol: grpc
-    - name: c-tchan-trft
-      port: 14267
-      targetPort: 0
-    - name: http-c-binary-trft
-      port: 14268
-      targetPort: 0
-      appProtocol: http
-    - name: otlp-grpc
-      port: 4317
-      targetPort: 0
-      appProtocol: grpc
-    - name: otlp-http
-      port: 4318
-      targetPort: 0
-      appProtocol: http
-  selector:
-    app.kubernetes.io/name: jaeger
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/component: all-in-one
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: jaeger-query
-  labels:
-    app.kubernetes.io/name: jaeger
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: "1.53.0"
-    app.kubernetes.io/component: service-query
-spec:
-  clusterIP: None
-  ports:
-    - name: http-query
-      port: 16686
-      targetPort: 16686
-    - name: grpc-query
-      port: 16685
-      targetPort: 16685
-  selector:
-    app.kubernetes.io/name: jaeger
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/component: all-in-one
----
-kind: Service
-apiVersion: v1
-metadata:
-  name: opensearch
-  labels:
-    app.kubernetes.io/name: opensearch
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: "2.19.0"
-    app.kubernetes.io/component: opensearch
-  annotations:
-    {}
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: opensearch
-    app.kubernetes.io/instance: store-demo
-  ports:
-  - name: http
-    protocol: TCP
-    port: 9200
-  - name: transport
-    protocol: TCP
-    port: 9300
-  - name: metrics
-    protocol: TCP
-    port: 9600
----
-kind: Service
-apiVersion: v1
-metadata:
-  name: opensearch-headless
-  labels:
-    app.kubernetes.io/name: opensearch
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: "2.19.0"
-    app.kubernetes.io/component: opensearch
-  annotations:
-    service.alpha.kubernetes.io/tolerate-unready-endpoints: "true"
-spec:
-  clusterIP: None # This is needed for statefulset hostnames like opensearch-0 to resolve
-  # Create endpoints also if the related pod isn't ready
-  publishNotReadyAddresses: true
-  selector:
-    app.kubernetes.io/name: opensearch
-    app.kubernetes.io/instance: store-demo
-  ports:
-  - name: http
-    port: 9200
-  - name: transport
-    port: 9300
-  - name: metrics
-    port: 9600
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: otel-collector
-  namespace: otel-demo
-  labels:
-    app.kubernetes.io/name: opentelemetry-collector
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: "0.120.0"
-    app.kubernetes.io/component: standalone-collector
-    component: standalone-collector
-spec:
-  type: ClusterIP
-  ports:
-    
-    - name: jaeger-compact
-      port: 6831
-      targetPort: 6831
-      protocol: UDP
-    - name: jaeger-grpc
-      port: 14250
-      targetPort: 14250
-      protocol: TCP
-    - name: jaeger-thrift
-      port: 14268
-      targetPort: 14268
-      protocol: TCP
-    - name: metrics
-      port: 8888
-      targetPort: 8888
-      protocol: TCP
-    - name: otlp
-      port: 4317
-      targetPort: 4317
-      protocol: TCP
-      appProtocol: grpc
-    - name: otlp-http
-      port: 4318
-      targetPort: 4318
-      protocol: TCP
-    - name: zipkin
-      port: 9411
-      targetPort: 9411
-      protocol: TCP
-  selector:
-    app.kubernetes.io/name: opentelemetry-collector
-    app.kubernetes.io/instance: store-demo
-    component: standalone-collector
-  internalTrafficPolicy: Cluster
----
-apiVersion: v1
-kind: Service
-metadata:
-  labels:
-    app.kubernetes.io/component: server
-    app.kubernetes.io/name: prometheus
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: v3.1.0
-    app.kubernetes.io/part-of: prometheus
-  name: prometheus
-  namespace: otel-demo
-spec:
-  ports:
-    - name: http
-      port: 9090
-      protocol: TCP
-      targetPort: 9090
-  selector:
-    app.kubernetes.io/component: server
-    app.kubernetes.io/name: prometheus
-    app.kubernetes.io/instance: store-demo
-  sessionAffinity: None
-  type: "ClusterIP"
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: grafana
-  namespace: otel-demo
-  labels:
-    app.kubernetes.io/name: grafana
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: "11.5.2"
-spec:
-  replicas: 1
-  revisionHistoryLimit: 10
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: grafana
-      app.kubernetes.io/instance: store-demo
-  strategy:
-    type: RollingUpdate
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: grafana
-        app.kubernetes.io/instance: store-demo
-        app.kubernetes.io/version: "11.5.2"
-      annotations:
-        checksum/config: 99cca986c6d5f6511900d815ee5a70d0c284aeb70af56fb96108c7bf456eff87
-        checksum/sc-dashboard-provider-config: e70bf6a851099d385178a76de9757bb0bef8299da6d8443602590e44f05fdf24
-        checksum/secret: bed677784356b2af7fb0d87455db21f077853059b594101a4f6532bfbd962a7f
-        kubectl.kubernetes.io/default-container: grafana
-    spec:
-      
-      serviceAccountName: grafana
-      automountServiceAccountToken: true
-      shareProcessNamespace: false
-      securityContext:
-        fsGroup: 472
-        runAsGroup: 472
-        runAsNonRoot: true
-        runAsUser: 472
-      enableServiceLinks: true
-      containers:
-        - name: grafana
-          image: "docker.io/grafana/grafana:11.5.2"
-          imagePullPolicy: IfNotPresent
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop:
-              - ALL
-            seccompProfile:
-              type: RuntimeDefault
-          volumeMounts:
-            - name: config
-              mountPath: "/etc/grafana/grafana.ini"
-              subPath: grafana.ini
-            - name: storage
-              mountPath: "/var/lib/grafana"
-            - name: dashboards-default
-              mountPath: "/var/lib/grafana/dashboards/default"
-            - name: config
-              mountPath: "/etc/grafana/provisioning/datasources/datasources.yaml"
-              subPath: "datasources.yaml"
-            - name: config
-              mountPath: "/etc/grafana/provisioning/dashboards/dashboardproviders.yaml"
-              subPath: "dashboardproviders.yaml"
-          ports:
-            - name: grafana
-              containerPort: 3000
-              protocol: TCP
-            - name: gossip-tcp
-              containerPort: 9094
-              protocol: TCP
-            - name: gossip-udp
-              containerPort: 9094
-              protocol: UDP
-            - name: profiling
-              containerPort: 6060
-              protocol: TCP
-          env:
-            - name: POD_IP
-              valueFrom:
-                fieldRef:
-                  fieldPath: status.podIP
-            - name: GF_SECURITY_ADMIN_USER
-              valueFrom:
-                secretKeyRef:
-                  name: grafana
-                  key: admin-user
-            - name: GF_SECURITY_ADMIN_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: grafana
-                  key: admin-password
-            - name: GF_INSTALL_PLUGINS
-              valueFrom:
-                configMapKeyRef:
-                  name: grafana
-                  key: plugins
-            - name: GF_PATHS_DATA
-              value: /var/lib/grafana/
-            - name: GF_PATHS_LOGS
-              value: /var/log/grafana
-            - name: GF_PATHS_PLUGINS
-              value: /var/lib/grafana/plugins
-            - name: GF_PATHS_PROVISIONING
-              value: /etc/grafana/provisioning
-          livenessProbe:
-            failureThreshold: 10
-            httpGet:
-              path: /api/health
-              port: 3000
-            initialDelaySeconds: 60
-            timeoutSeconds: 30
-          readinessProbe:
-            httpGet:
-              path: /api/health
-              port: 3000
-          resources:
-            limits:
-              memory: 150Mi
-      volumes:
-        - name: config
-          configMap:
-            name: grafana
-        - name: dashboards-default
-          configMap:
-            name: grafana-dashboards
-        - name: storage
-          emptyDir: {}
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: jaeger
-  labels:
-    app.kubernetes.io/name: jaeger
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: "1.53.0"
-    app.kubernetes.io/component: all-in-one
-    prometheus.io/port: "14269"
-    prometheus.io/scrape: "true"
-spec:
-  replicas: 1
-  strategy:
-    type: Recreate
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: jaeger
-      app.kubernetes.io/instance: store-demo
-      app.kubernetes.io/component: all-in-one
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: jaeger
-        app.kubernetes.io/instance: store-demo
-        app.kubernetes.io/component: all-in-one
-      annotations:
-        prometheus.io/port: "14269"
-        prometheus.io/scrape: "true"
-    spec:
-      
-      containers:
-        - env:
-            - name: METRICS_STORAGE_TYPE
-              value: prometheus
-            - name: COLLECTOR_OTLP_GRPC_HOST_PORT
-              value: 0.0.0.0:4317
-            - name: COLLECTOR_OTLP_HTTP_HOST_PORT
-              value: 0.0.0.0:4318
-            - name: SPAN_STORAGE_TYPE
-              value: memory
-            
-            - name: COLLECTOR_ZIPKIN_HOST_PORT
-              value: :9411
-            - name: JAEGER_DISABLED
-              value: "false"
-            - name: COLLECTOR_OTLP_ENABLED
-              value: "true"
-          securityContext:
-            {}
-          image: jaegertracing/all-in-one:1.53.0
-          imagePullPolicy: IfNotPresent
-          name: jaeger
-          args:
-            - "--memory.max-traces=5000"
-            - "--query.base-path=/jaeger/ui"
-            - "--prometheus.server-url=http://prometheus:9090"
-            - "--prometheus.query.normalize-calls=true"
-            - "--prometheus.query.normalize-duration=true"
-          ports:
-            - containerPort: 5775
-              protocol: UDP
-            - containerPort: 6831
-              protocol: UDP
-            - containerPort: 6832
-              protocol: UDP
-            - containerPort: 5778
-              protocol: TCP
-            - containerPort: 16686
-              protocol: TCP
-            - containerPort: 16685
-              protocol: TCP
-            - containerPort: 9411
-              protocol: TCP
-            - containerPort: 4317
-              protocol: TCP
-            - containerPort: 4318
-              protocol: TCP
-          livenessProbe:
-            failureThreshold: 5
-            httpGet:
-              path: /
-              port: 14269
-              scheme: HTTP
-            initialDelaySeconds: 5
-            periodSeconds: 15
-            successThreshold: 1
-            timeoutSeconds: 1
-          readinessProbe:
-            failureThreshold: 3
-            httpGet:
-              path: /
-              port: 14269
-              scheme: HTTP
-            initialDelaySeconds: 1
-            periodSeconds: 10
-            successThreshold: 1
-            timeoutSeconds: 1
-          resources:
-            limits:
-              memory: 400Mi
-          volumeMounts:
-      securityContext:
-        fsGroup: 10001
-        runAsGroup: 10001
-        runAsUser: 10001
-      serviceAccountName: jaeger
-      volumes:
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: otel-collector
-  namespace: otel-demo
-  labels:
-    app.kubernetes.io/name: opentelemetry-collector
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: "0.120.0"
-    app.kubernetes.io/component: standalone-collector
-spec:
-  replicas: 1
-  revisionHistoryLimit: 10
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: opentelemetry-collector
-      app.kubernetes.io/instance: store-demo
-      component: standalone-collector
-  strategy:
-    type: RollingUpdate
-  template:
-    metadata:
-      annotations:
-        checksum/config: a89266db0e62ae4711e3cef2ea43e19dac4d19232eb4bb06b05882a36f128110
-        opentelemetry_community_demo: "true"
-        prometheus.io/scrape: "true"
-      labels:
-        app.kubernetes.io/name: opentelemetry-collector
-        app.kubernetes.io/instance: store-demo
-        component: standalone-collector
-        
-    spec:
-      
-      serviceAccountName: otel-collector
-      securityContext:
-        {}
-      containers:
-        - name: opentelemetry-collector
-          args:
-            - --config=/conf/relay.yaml
-          securityContext:
-            {}
-          image: "otel/opentelemetry-collector-contrib:0.120.0"
-          imagePullPolicy: IfNotPresent
-          ports:
-            
-            - name: jaeger-compact
-              containerPort: 6831
-              protocol: UDP
-            - name: jaeger-grpc
-              containerPort: 14250
-              protocol: TCP
-            - name: jaeger-thrift
-              containerPort: 14268
-              protocol: TCP
-            - name: metrics
-              containerPort: 8888
-              protocol: TCP
-            - name: otlp
-              containerPort: 4317
-              protocol: TCP
-            - name: otlp-http
-              containerPort: 4318
-              protocol: TCP
-            - name: zipkin
-              containerPort: 9411
-              protocol: TCP
-          env:
-            - name: MY_POD_IP
-              valueFrom:
-                fieldRef:
-                  apiVersion: v1
-                  fieldPath: status.podIP
-            - name: GOMEMLIMIT
-              value: "160MiB"
-          livenessProbe:
-            httpGet:
-              path: /
-              port: 13133
-          readinessProbe:
-            httpGet:
-              path: /
-              port: 13133
-          resources:
-            limits:
-              memory: 200Mi
-          volumeMounts:
-            - mountPath: /conf
-              name: opentelemetry-collector-configmap
-      volumes:
-        - name: opentelemetry-collector-configmap
-          configMap:
-            name: otel-collector
-            items:
-              - key: relay
-                path: relay.yaml
-      hostNetwork: false
----
-
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  labels:
-    app.kubernetes.io/component: server
-    app.kubernetes.io/name: prometheus
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: v3.1.0
-    app.kubernetes.io/part-of: prometheus
-  name: prometheus
-  namespace: otel-demo
-spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/component: server
-      app.kubernetes.io/name: prometheus
-      app.kubernetes.io/instance: store-demo
-  replicas: 1
-  revisionHistoryLimit: 10
-  strategy:
-    type: Recreate
-    rollingUpdate: null
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/component: server
-        app.kubernetes.io/name: prometheus
-        app.kubernetes.io/instance: store-demo
-        app.kubernetes.io/version: v3.1.0
-        app.kubernetes.io/part-of: prometheus
-    spec:
-      enableServiceLinks: true
-      serviceAccountName: prometheus
-      containers:
-
-        - name: prometheus-server
-          image: "quay.io/prometheus/prometheus:v3.1.0"
-          imagePullPolicy: "IfNotPresent"
-          args:
-            - --storage.tsdb.retention.time=15d
-            - --config.file=/etc/config/prometheus.yml
-            - --storage.tsdb.path=/data
-            - --web.console.libraries=/etc/prometheus/console_libraries
-            - --web.console.templates=/etc/prometheus/consoles
-            - --enable-feature=exemplar-storage
-            - --web.enable-otlp-receiver
-          ports:
-            - containerPort: 9090
-          readinessProbe:
-            httpGet:
-              path: /-/ready
-              port: 9090
-              scheme: HTTP
-            initialDelaySeconds: 30
-            periodSeconds: 5
-            timeoutSeconds: 4
-            failureThreshold: 3
-            successThreshold: 1
-          livenessProbe:
-            httpGet:
-              path: /-/healthy
-              port: 9090
-              scheme: HTTP
-            initialDelaySeconds: 30
-            periodSeconds: 15
-            timeoutSeconds: 10
-            failureThreshold: 3
-            successThreshold: 1
-          resources:
-            limits:
-              memory: 300Mi
-          volumeMounts:
-            - name: config-volume
-              mountPath: /etc/config
-            - name: storage-volume
-              mountPath: /data
-              subPath: ""
-      dnsPolicy: ClusterFirst
-      securityContext:
-        fsGroup: 65534
-        runAsGroup: 65534
-        runAsNonRoot: true
-        runAsUser: 65534
-      terminationGracePeriodSeconds: 300
-      volumes:
-        - name: config-volume
-          configMap:
-            name: prometheus
-        - name: storage-volume
-          emptyDir:
-            {}
----
-apiVersion: apps/v1
-kind: StatefulSet
-metadata:
-  name: opensearch
-  labels:
-    app.kubernetes.io/name: opensearch
-    app.kubernetes.io/instance: store-demo
-    app.kubernetes.io/version: "2.19.0"
-    app.kubernetes.io/component: opensearch
-  annotations:
-    majorVersion: "2"
-spec:
-  serviceName: opensearch-headless
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: opensearch
-      app.kubernetes.io/instance: store-demo
-  replicas: 1
-  podManagementPolicy: Parallel
-  updateStrategy:
-    type: RollingUpdate
-  template:
-    metadata:
-      name: "opensearch"
-      labels:
-        app.kubernetes.io/name: opensearch
-        app.kubernetes.io/instance: store-demo
-        app.kubernetes.io/version: "2.19.0"
-        app.kubernetes.io/component: opensearch
-      annotations:
-        configchecksum: 39d5e484f1cc28f685f786a856c4336341c6c034f5c0b1a81337e4a39511e47
-    spec:
-      securityContext:
-        fsGroup: 1000
-        runAsUser: 1000
-      automountServiceAccountToken: false
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-          - weight: 1
-            podAffinityTerm:
-              topologyKey: kubernetes.io/hostname
-              labelSelector:
-                matchExpressions:
-                - key: app.kubernetes.io/instance
-                  operator: In
-                  values:
-                  - store-demo
-                - key: app.kubernetes.io/name
-                  operator: In
-                  values:
-                  - opensearch
-      terminationGracePeriodSeconds: 120
-      volumes:
-      - name: config
-        configMap:
-          name: opensearch-config
-      - emptyDir: {}
-        name: config-emptydir
-      enableServiceLinks: true
-      initContainers:
-      - name: configfile
-        image: "opensearchproject/opensearch:2.19.0"
-        imagePullPolicy: "IfNotPresent"
-        command:
-        - sh
-        - -c
-        - |
-          #!/usr/bin/env bash
-          cp -r /tmp/configfolder/*  /tmp/config/
-        resources:
-          {}
-        volumeMounts:
-          - mountPath: /tmp/config/
-            name: config-emptydir
-          - name: config
-            mountPath: /tmp/configfolder/opensearch.yml
-            subPath: opensearch.yml
-      containers:
-      - name: "opensearch"
-        securityContext:
-          capabilities:
-            drop:
-            - ALL
-          runAsNonRoot: true
-          runAsUser: 1000
-
-        image: "opensearchproject/opensearch:2.19.0"
-        imagePullPolicy: "IfNotPresent"
-        readinessProbe:
-          failureThreshold: 3
-          periodSeconds: 5
-          tcpSocket:
-            port: 9200
-          timeoutSeconds: 3
-        startupProbe:
-          failureThreshold: 30
-          initialDelaySeconds: 5
-          periodSeconds: 10
-          tcpSocket:
-            port: 9200
-          timeoutSeconds: 3
-        ports:
-        - name: http
-          containerPort: 9200
-        - name: transport
-          containerPort: 9300
-        - name: metrics
-          containerPort: 9600
-        resources:
-          limits:
-            memory: 1100Mi
-          requests:
-            cpu: 1000m
-            memory: 100Mi
-        env:
-        - name: node.name
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.name
-        - name: discovery.seed_hosts
-          value: "opensearch-cluster-master-headless"
-        - name: cluster.name
-          value: "demo-cluster"
-        - name: network.host
-          value: "0.0.0.0"
-        - name: OPENSEARCH_JAVA_OPTS
-          value: "-Xms300m -Xmx300m"
-        - name: node.roles
-          value: "master,ingest,data,remote_cluster_client,"
-        - name: discovery.type
-          value: "single-node"
-        - name: bootstrap.memory_lock
-          value: "true"
-        - name: DISABLE_INSTALL_DEMO_CONFIG
-          value: "true"
-        - name: DISABLE_SECURITY_PLUGIN
-          value: "true"
-        volumeMounts:
-        - name: config-emptydir
-          mountPath: /usr/share/opensearch/config/opensearch.yml
-          subPath: opensearch.yml
+           
