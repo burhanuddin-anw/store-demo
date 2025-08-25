@@ -8,7 +8,7 @@ import router from './router'
 const { tracer } = initTelemetry();
 
 // Add tracer to the global window object for debugging/reference
-window.__otel = { tracer };
+(window as any).__otel = { tracer };
 
 const app = createApp(App)
 app.use(router)

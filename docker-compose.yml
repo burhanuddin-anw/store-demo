@@ -1,4 +1,33 @@
 services:
+  # OpenTelemetry Collector
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: otel-collector
+    restart: always
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    ports:
+      - "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP HTTP receiver
+      - "8888:8888"   # Prometheus metrics
+      - "8889:8889"   # Prometheus exporter metrics
+    networks:
+      - backend_services
+
+  # Jaeger
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger
+    restart: always
+    ports:
+      - "16686:16686"
+      - "14250:14250"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    networks:
+      - backend_services
+
   mongodb:
     image: mongo:6.0.6
     container_name: mongo
@@ -49,11 +78,17 @@ services:
       - ORDER_QUEUE_PASSWORD=password
       - ORDER_QUEUE_NAME=orders
       - ORDER_QUEUE_RECONNECT_LIMIT=3
+      # OpenTelemetry configuration
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_SERVICE_NAME=order-service
+      - OTEL_RESOURCE_ATTRIBUTES=service.version=1.0.0,deployment.environment=docker-compose
     networks:
       - backend_services
     depends_on:
       rabbitmq:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
   makeline-service:
     build: src/makeline-service
     container_name: makeline-service
@@ -73,6 +108,12 @@ services:
       - ORDER_DB_URI=mongodb://mongodb:27017
       - ORDER_DB_NAME=orderdb
       - ORDER_DB_COLLECTION_NAME=orders
+      # OpenTelemetry configuration
+      - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317
+      - OTEL_SERVICE_NAME=makeline-service
+      - OTEL_RESOURCE_ATTRIBUTES=service.version=1.0.0,deployment.environment=docker-compose
+      - APP_VERSION=1.0.0
+      - ENVIRONMENT=docker-compose
     networks:
       - backend_services
     depends_on:
@@ -80,6 +121,8 @@ services:
         condition: service_healthy
       mongodb:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
   product-service:
     build: src/product-service
     container_name: product-service
@@ -93,8 +136,15 @@ services:
       retries: 5
     environment:
       - AI_SERVICE_URL=http://ai-service:5001/
+      # OpenTelemetry configuration
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_SERVICE_NAME=product-service
+      - OTEL_RESOURCE_ATTRIBUTES=service.version=1.0.0,deployment.environment=docker-compose
     networks:
       - backend_services
+    depends_on:
+      otel-collector:
+        condition: service_started
   store-front:
     build: src/store-front
     container_name: store-front
@@ -106,11 +156,17 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
+    environment:
+      # OpenTelemetry configuration for browser (uses HTTP endpoint)
+      - VITE_OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318/v1/traces
+      - VITE_APP_VERSION=1.0.0
+      - VITE_ENVIRONMENT=docker-compose
     networks:
       - backend_services
     depends_on:
       - product-service
       - order-service
+      - otel-collector
   store-admin:
     build: src/store-admin
     container_name: store-admin
@@ -122,11 +178,17 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
+    environment:
+      # OpenTelemetry configuration for browser (uses HTTP endpoint)
+      - VITE_OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318/v1/traces
+      - VITE_APP_VERSION=1.0.0
+      - VITE_ENVIRONMENT=docker-compose
     networks:
       - backend_services
     depends_on:
       - product-service
       - makeline-service
+      - otel-collector
   virtual-customer:
     build: src/virtual-customer
     container_name: virtual-customer
@@ -134,11 +196,17 @@ services:
     environment:
       - ORDER_SERVICE_URL=http://order-service:3000/
       - ORDERS_PER_HOUR=30
+      # OpenTelemetry configuration
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_SERVICE_NAME=virtual-customer
+      - OTEL_RESOURCE_ATTRIBUTES=service.version=1.0.0,deployment.environment=docker-compose
     networks:
       - backend_services
     depends_on:
       order-service:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
   virtual-worker:
     build: src/virtual-worker
     container_name: virtual-worker
@@ -146,11 +214,17 @@ services:
     environment:
       - MAKELINE_SERVICE_URL=http://makeline-service:3001
       - ORDERS_PER_HOUR=20
+      # OpenTelemetry configuration
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_SERVICE_NAME=virtual-worker
+      - OTEL_RESOURCE_ATTRIBUTES=service.version=1.0.0,deployment.environment=docker-compose
     networks:
       - backend_services
     depends_on:
       makeline-service:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
   ai-service:
     build: src/ai-service
     container_name: ai-service
@@ -168,8 +242,15 @@ services:
       - AZURE_OPENAI_ENDPOINT= # required if using Azure OpenAI
       - OPENAI_API_KEY= # required if using OpenAI and not required if using Azure OpenAI with Azure AD
       - OPENAI_ORG_ID= # required if using OpenAI
+      # OpenTelemetry configuration
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_SERVICE_NAME=ai-service
+      - OTEL_RESOURCE_ATTRIBUTES=service.version=1.0.0,deployment.environment=docker-compose
     networks:
       - backend_services
+    depends_on:
+      otel-collector:
+        condition: service_started
 networks:
   backend_services:
     driver: bridge

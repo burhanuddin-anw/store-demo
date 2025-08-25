@@ -7,6 +7,9 @@ WORKDIR /app
 # Set the build argument for the app version number
 ARG APP_VERSION=0.1.0
 
+# Copy the telemetry file into the container
+# COPY telemetry.go .
+
 # Copy the current directory contents into the container at /app
 COPY . /app
 

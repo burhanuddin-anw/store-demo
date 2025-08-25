@@ -10,10 +10,13 @@ ARG APP_VERSION=0.1.0
 # Copy the requirements file into the container
 COPY requirements.txt .
 
+# Copy the telemetry file into the container
+COPY telemetry.py .
+
 # Install the dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 # Install OpenTelemetry auto-instrumentation
-RUN pip install --no-cache-dir opentelemetry-instrument
+RUN pip install --no-cache-dir opentelemetry-distro opentelemetry-instrumentation
 
 # Copy the rest of the application code into the container
 COPY . .

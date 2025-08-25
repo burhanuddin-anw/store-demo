@@ -1,10 +1,8 @@
 import { WebTracerProvider } from '@opentelemetry/sdk-trace-web';
-import { getWebAutoInstrumentations } from '@opentelemetry/auto-instrumentations-web';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { Resource } from '@opentelemetry/resources';
-import { SemanticResourceAttributes } from '@opentelemetry/semantic-conventions';
+import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
 import { SimpleSpanProcessor, BatchSpanProcessor } from '@opentelemetry/sdk-trace-base';
-import { registerInstrumentations } from '@opentelemetry/instrumentation';
 import { ZoneContextManager } from '@opentelemetry/context-zone';
 
 // Initialize the OpenTelemetry provider
@@ -18,8 +16,8 @@ export function initTelemetry() {
 
   // Create a resource that identifies your application
   const resource = new Resource({
-    [SemanticResourceAttributes.SERVICE_NAME]: serviceName,
-    [SemanticResourceAttributes.SERVICE_VERSION]: serviceVersion,
+    [ATTR_SERVICE_NAME]: serviceName,
+    [ATTR_SERVICE_VERSION]: serviceVersion,
     'environment': environment
   });
 
@@ -43,21 +41,6 @@ export function initTelemetry() {
   // Register the provider
   provider.register({
     contextManager: new ZoneContextManager()
-  });
-
-  // Automatically instrument frontend libraries
-  registerInstrumentations({
-    instrumentations: [
-      getWebAutoInstrumentations({
-        '@opentelemetry/instrumentation-document-load': { enabled: true },
-        '@opentelemetry/instrumentation-fetch': { 
-          enabled: true,
-          propagateTraceHeaderCorsUrls: [/.*/], // Allow trace header propagation to backend
-        },
-        '@opentelemetry/instrumentation-user-interaction': { enabled: true },
-        '@opentelemetry/instrumentation-xml-http-request': { enabled: true },
-      }),
-    ],
   });
 
   // Create a tracer for manual instrumentation if needed

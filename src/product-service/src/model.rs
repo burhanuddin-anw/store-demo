@@ -10,7 +10,7 @@ pub struct Product {
     pub image: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct ProductInfo {
     pub product_id: i32,
 }
