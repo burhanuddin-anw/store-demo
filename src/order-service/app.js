@@ -2,9 +2,29 @@
 
 const path = require('path')
 const AutoLoad = require('@fastify/autoload')
+const promClient = require('prom-client')
 
 module.exports = async function (fastify, opts) {
 // Place here your custom code!
+
+  // Create a Registry which registers the metrics
+  const register = new promClient.Registry()
+  
+  // Add a default label which is added to all metrics
+  register.setDefaultLabels({
+    app: 'order-service'
+  })
+  
+  // Enable the collection of default metrics
+  promClient.collectDefaultMetrics({
+    register
+  })
+  
+  // Add metrics endpoint
+  fastify.get('/metrics', async (request, reply) => {
+    reply.type('text/plain')
+    return register.metrics()
+  })
 
   fastify.register(require('@fastify/cors'), {
     origin: '*'

@@ -3,7 +3,27 @@ use serde::Serialize;
 use std::env;
 use std::time::{Duration, Instant};
 use tracing::{info, instrument, warn, error};
+use actix_web::{web, App, HttpServer, HttpResponse, Result};
+use prometheus::{Encoder, TextEncoder};
 mod telemetry;
+
+async fn metrics() -> Result<HttpResponse> {
+    let encoder = TextEncoder::new();
+    let metric_families = prometheus::gather();
+    let mut buffer = Vec::new();
+    encoder.encode(&metric_families, &mut buffer).unwrap();
+    
+    Ok(HttpResponse::Ok()
+        .content_type("text/plain; version=0.0.4; charset=utf-8")
+        .body(buffer))
+}
+
+async fn health() -> Result<HttpResponse> {
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "status": "Healthy",
+        "service": "virtual-customer"
+    })))
+}
 
 #[instrument]
 #[tokio::main]
@@ -13,6 +33,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("Failed to initialize OpenTelemetry tracer: {}", e);
     }
     
+    // Start HTTP server for metrics
+    let server = HttpServer::new(|| {
+        App::new()
+            .route("/health", web::get().to(health))
+            .route("/metrics", web::get().to(metrics))
+    })
+    .bind("0.0.0.0:8081")?
+    .run();
+    
+    info!("Started virtual-customer metrics server on http://0.0.0.0:8081");
+    
+    // Clone variables for the spawned task
     let order_service_url =
         env::var("ORDER_SERVICE_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
     info!(order_service_url = %order_service_url, "Using order service");
@@ -28,6 +60,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
+    // Spawn the order submission task
+    let order_task = tokio::spawn(async move {
+        order_submission_loop(order_service_url, orders_per_hour).await
+    });
+    
+    // Run both tasks concurrently
+    tokio::try_join!(
+        async { server.await.map_err(|e| Box::new(e) as Box<dyn std::error::Error>) },
+        async { order_task.await.map_err(|e| Box::new(e) as Box<dyn std::error::Error>)? }
+    )?;
+    
+    // Shutdown the tracer provider before the program exits
+    telemetry::shutdown_tracer();
+    Ok(())
+}
+
+async fn order_submission_loop(order_service_url: String, orders_per_hour: u64) -> Result<(), Box<dyn std::error::Error>> {
     println!("Orders to submit per hour: {}", orders_per_hour);
 
     let minutes: f64 = 60.0;
@@ -140,10 +189,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         tokio::time::sleep(sleep_duration).await;
     }
-    
-    // Shutdown the tracer provider before the program exits
-    telemetry::shutdown_tracer();
-    Ok(())
 }
 
 #[derive(Serialize, Debug)]

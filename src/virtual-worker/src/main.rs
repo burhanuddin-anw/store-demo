@@ -2,7 +2,27 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::time::{Duration, Instant};
 use tracing::{info, instrument, error};
+use actix_web::{web, App, HttpServer, HttpResponse, Result};
+use prometheus::{Encoder, TextEncoder};
 mod telemetry;
+
+async fn metrics() -> Result<HttpResponse> {
+    let encoder = TextEncoder::new();
+    let metric_families = prometheus::gather();
+    let mut buffer = Vec::new();
+    encoder.encode(&metric_families, &mut buffer).unwrap();
+    
+    Ok(HttpResponse::Ok()
+        .content_type("text/plain; version=0.0.4; charset=utf-8")
+        .body(buffer))
+}
+
+async fn health() -> Result<HttpResponse> {
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "status": "Healthy",
+        "service": "virtual-worker"
+    })))
+}
 
 #[instrument]
 #[tokio::main]
@@ -12,15 +32,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("Failed to initialize OpenTelemetry tracer: {}", e);
     }
     
-    let client = reqwest::Client::new();
-
+    // Start HTTP server for metrics
+    let server = HttpServer::new(|| {
+        App::new()
+            .route("/health", web::get().to(health))
+            .route("/metrics", web::get().to(metrics))
+    })
+    .bind("0.0.0.0:8082")?
+    .run();
+    
+    info!("Started virtual-worker metrics server on http://0.0.0.0:8082");
+    
+    // Clone variables for the spawned task
     let order_service_url =
         env::var("MAKELINE_SERVICE_URL").unwrap_or_else(|_| "http://localhost:3001".to_string());
-
     let orders_per_hour: u64 = env::var("ORDERS_PER_HOUR")
         .unwrap_or_else(|_| "0".to_string())
         .parse()
         .unwrap_or(0);
+    
+    // Spawn the worker task
+    let worker_task = tokio::spawn(async move {
+        worker_loop(order_service_url, orders_per_hour).await
+    });
+    
+    // Run both tasks concurrently
+    tokio::try_join!(
+        async { server.await.map_err(|e| Box::new(e) as Box<dyn std::error::Error>) },
+        async { worker_task.await.map_err(|e| Box::new(e) as Box<dyn std::error::Error>)? }
+    )?;
+    
+    // Shutdown the tracer provider before the program exits
+    telemetry::shutdown_tracer();
+    Ok(())
+}
+
+async fn worker_loop(order_service_url: String, orders_per_hour: u64) -> Result<(), Box<dyn std::error::Error>> {
+    let client = reqwest::Client::new();
 
     if orders_per_hour > 0 {
         println!("Orders to process per hour: {}", orders_per_hour);
@@ -60,14 +108,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let orders = get_orders(&client, &order_service_url).await?;
         process_orders(&client, orders, &order_service_url).await?;
         println!("Order processing complete");
-        
-        // Shutdown the tracer provider before the program exits
-        telemetry::shutdown_tracer();
-        std::process::exit(0);
     }
-
-    // Shutdown the tracer provider before the program exits
-    telemetry::shutdown_tracer();
+    
     Ok(())
 }
 

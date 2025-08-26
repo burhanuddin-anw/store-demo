@@ -10,6 +10,7 @@ openai==1.66.3
 pillow==11.1.0
 dotenv==0.9.9
 pylint==3.3.5
+prometheus-client==0.21.0
 # OpenTelemetry packages
 opentelemetry-api>=1.24.0
 opentelemetry-sdk>=1.24.0

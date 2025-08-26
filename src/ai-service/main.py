@@ -9,9 +9,10 @@ configuration, and health status monitoring.
 import os
 from fastapi import FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from routers.description_generator import description
 from routers.image_generator import image
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
 # Import telemetry module for OpenTelemetry instrumentation
 from telemetry import configure_telemetry
@@ -23,6 +24,13 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 # Configure OpenTelemetry instrumentation
 tracer_provider = configure_telemetry(app)
+
+@app.get("/metrics", summary="Prometheus metrics endpoint")
+async def get_metrics():
+    """
+    Returns Prometheus metrics
+    """
+    return PlainTextResponse(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 @app.get("/health", summary="check if server is healthy", operation_id="health")
 async def get_health():

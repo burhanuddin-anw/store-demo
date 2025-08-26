@@ -42,7 +42,7 @@ pub fn run(mut settings: Settings) -> Result<Server, std::io::Error> {
                 web::post().to(ai_generate_description),
             )
             .route("/ai/generate/image", web::post().to(ai_generate_image))
-            .route("/metrics", web::get().to(get_metrics))
+            .route("/metrics", web::get().to(prometheus_metrics))
             .route("/import", web::post().to(add_products))
             .route("/{product_id}", web::get().to(get_product))
             .route("/", web::get().to(get_products))
