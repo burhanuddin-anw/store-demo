@@ -1,10 +1,18 @@
 use serde::{Deserialize, Serialize};
 use std::env;
-use std::thread;
 use std::time::{Duration, Instant};
+use tracing::{info, instrument, error};
+mod telemetry;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = reqwest::blocking::Client::new();
+#[instrument]
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize OpenTelemetry
+    if let Err(e) = telemetry::init_tracer() {
+        eprintln!("Failed to initialize OpenTelemetry tracer: {}", e);
+    }
+    
+    let client = reqwest::Client::new();
 
     let order_service_url =
         env::var("MAKELINE_SERVICE_URL").unwrap_or_else(|_| "http://localhost:3001".to_string());
@@ -33,27 +41,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         loop {
             // get orders
-            let orders = get_orders(&client, &order_service_url)?;
+            let orders = get_orders(&client, &order_service_url).await?;
 
             // check if we have orders to process
             if orders.len() > 0 {
-                println!("Processing orders");
-                process_orders(&client, orders, &order_service_url)?;
-                println!("Order processing complete");
+                info!("Processing {} orders", orders.len());
+                process_orders(&client, orders, &order_service_url).await?;
+                info!("Order processing complete");
             } else {
                 println!("No orders to process");
             }
 
             // sleep for the specified duration
-            thread::sleep(sleep_duration);
+            tokio::time::sleep(sleep_duration).await;
         }
     } else {
         println!("Processing orders");
-        let orders = get_orders(&client, &order_service_url)?;
-        process_orders(&client, orders, &order_service_url)?;
+        let orders = get_orders(&client, &order_service_url).await?;
+        process_orders(&client, orders, &order_service_url).await?;
         println!("Order processing complete");
+        
+        // Shutdown the tracer provider before the program exits
+        telemetry::shutdown_tracer();
         std::process::exit(0);
     }
+
+    // Shutdown the tracer provider before the program exits
+    telemetry::shutdown_tracer();
+    Ok(())
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -81,17 +96,18 @@ enum OrderStatus {
     Complete,
 }
 
-fn get_orders(
-    client: &reqwest::blocking::Client,
+#[instrument(name = "get_orders", skip(client))]
+async fn get_orders(
+    client: &reqwest::Client,
     url: &str,
 ) -> Result<Vec<Order>, Box<dyn std::error::Error>> {
-    let response = client.get(format!("{}/order/fetch", url)).send();
+    let response = client.get(format!("{}/order/fetch", url)).send().await;
 
     match response {
         Ok(res) => {
             let res = res.error_for_status()?;
 
-            let json = res.text()?;
+            let json = res.text().await?;
 
             if json.trim().is_empty() || json.trim() == "null" {
                 println!("No orders to process");
@@ -121,8 +137,9 @@ fn get_orders(
     Ok(vec![])
 }
 
-fn process_orders(
-    client: &reqwest::blocking::Client,
+#[instrument(name = "process_orders", skip(client, orders))]
+async fn process_orders(
+    client: &reqwest::Client,
     orders: Vec<Order>,
     url: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -141,7 +158,8 @@ fn process_orders(
             .put(format!("{}/order", url))
             .header("Content-Type", "application/json")
             .body(serialized_order.clone())
-            .send();
+            .send()
+            .await;
 
         match response {
             Ok(_res) => {
@@ -149,13 +167,15 @@ fn process_orders(
                 let elapsed_time = start_time.elapsed();
 
                 // print the order details
-                println!(
-                    "Order {} processed at {:.2?} with status of {}. {}",
-                    order.order_id, elapsed_time, order.status, serialized_order
+                info!(
+                    order_id = order.order_id,
+                    elapsed_time = ?elapsed_time,
+                    status = order.status,
+                    "Order processed successfully"
                 );
             }
             Err(err) => {
-                println!("Error completing the order: {}", err);
+                error!(error = %err, "Error completing the order");
             }
         }
     }

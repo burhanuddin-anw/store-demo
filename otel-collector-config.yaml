@@ -31,7 +31,9 @@ exporters:
 
   # Export to console for debugging
   debug:
-    verbosity: basic
+    verbosity: detailed
+    sampling_initial: 5
+    sampling_thereafter: 200
 
   # Prometheus metrics exporter
   prometheus:

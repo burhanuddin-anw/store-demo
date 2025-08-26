@@ -25,5 +25,5 @@ EXPOSE 3000
 # Set the environment variable for the app version number
 ENV APP_VERSION=$APP_VERSION
 
-# Start the app
-CMD [ "npm", "start" ]
+# Start the app with OpenTelemetry instrumentation
+CMD [ "npm", "run", "start:instrumented" ]

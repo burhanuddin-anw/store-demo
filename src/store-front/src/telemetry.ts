@@ -1,57 +1,61 @@
 import { WebTracerProvider } from '@opentelemetry/sdk-trace-web';
-import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { Resource } from '@opentelemetry/resources';
-import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
-import { SimpleSpanProcessor, BatchSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { SemanticResourceAttributes } from '@opentelemetry/semantic-conventions';
+import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { ZoneContextManager } from '@opentelemetry/context-zone';
+import { registerInstrumentations } from '@opentelemetry/instrumentation';
+import { getWebAutoInstrumentations } from '@opentelemetry/auto-instrumentations-web';
 
 // Initialize the OpenTelemetry provider
 export function initTelemetry() {
+  console.log('OpenTelemetry initialization started for store-front');
+  
   try {
-    // Use environment variables if available
-    const serviceName = 'store-front';
-    const serviceVersion = import.meta.env.VITE_APP_VERSION || '0.1.0';
-    const environment = import.meta.env.VITE_ENVIRONMENT || 'development';
-    const collectorUrl = import.meta.env.VITE_OTEL_EXPORTER_OTLP_ENDPOINT || 'http://localhost:4318/v1/traces';
+    // Configure resource
+    const resource = new Resource({
+      [SemanticResourceAttributes.SERVICE_NAME]: 'store-front',
+      [SemanticResourceAttributes.SERVICE_VERSION]: '0.1.0',
+      'environment': 'development'
+    });
 
-  // Create a resource that identifies your application
-  const resource = new Resource({
-    [ATTR_SERVICE_NAME]: serviceName,
-    [ATTR_SERVICE_VERSION]: serviceVersion,
-    'environment': environment
-  });
+    // Create tracer provider
+    const provider = new WebTracerProvider({ resource });
 
-  // Create a provider to manage tracing
-  const provider = new WebTracerProvider({ resource });
+    // Configure OTLP exporter
+    const exporter = new OTLPTraceExporter({
+      url: 'http://localhost:4318/v1/traces',
+    });
 
-  // Create exporter to send traces to collector
-  const exporter = new OTLPTraceExporter({
-    url: collectorUrl,
-    headers: {}
-  });
-
-  // Use simple span processor for development, batch for production
-  const isProduction = environment === 'production';
-  if (isProduction) {
+    // Add span processor
     provider.addSpanProcessor(new BatchSpanProcessor(exporter));
-  } else {
-    provider.addSpanProcessor(new SimpleSpanProcessor(exporter));
-  }
 
-  // Register the provider
-  provider.register({
-    contextManager: new ZoneContextManager()
-  });
+    // Register the provider
+    provider.register({
+      contextManager: new ZoneContextManager(),
+    });
 
-  // Create a tracer for manual instrumentation if needed
-  const tracer = provider.getTracer(serviceName);
-  
-  console.log(`OpenTelemetry instrumentation initialized for ${serviceName}`);
-  
-    return { tracer, provider };
+    // Register auto-instrumentations
+    registerInstrumentations({
+      instrumentations: [getWebAutoInstrumentations()],
+    });
+
+    const tracer = provider.getTracer('store-front');
+    
+    console.log('OpenTelemetry successfully initialized for store-front');
+    
+    return { 
+      tracer, 
+      provider 
+    };
   } catch (error) {
     console.error('Failed to initialize OpenTelemetry:', error);
-    return { tracer: undefined, provider: undefined };
+    console.log('Application will continue without OpenTelemetry instrumentation');
+    
+    return { 
+      tracer: undefined, 
+      provider: undefined 
+    };
   }
 }
 

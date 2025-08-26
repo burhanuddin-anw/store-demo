@@ -10,9 +10,9 @@ import { useProductStore } from '@/stores'
 import type { Product } from '@/types'
 import TopNav from './components/TopNav.vue'
 
-const productStore = useProductStore()
-
 onMounted(() => {
+  const productStore = useProductStore()
+  
   if (productStore.count === 0) {
     console.log('Fetching products')
     fetch('/api/products')

@@ -1,13 +1,13 @@
 use rand::Rng;
 use serde::Serialize;
 use std::env;
-use std::thread;
 use std::time::{Duration, Instant};
 use tracing::{info, instrument, warn, error};
 mod telemetry;
 
 #[instrument]
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize OpenTelemetry
     if let Err(e) = telemetry::init_tracer() {
         eprintln!("Failed to initialize OpenTelemetry tracer: {}", e);
@@ -92,14 +92,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             items_count = order.items.len()
         ).entered();
         
-        let client = reqwest::blocking::Client::new();
+        let client = reqwest::Client::new();
         info!(url = %order_service_url, "Sending order request");
         
         let response = client
             .post(order_service_url.clone())
             .header("Content-Type", "application/json")
             .body(serialized_order.clone())
-            .send();
+            .send()
+            .await;
 
         match response {
             Ok(res) => {
@@ -137,7 +138,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        thread::sleep(sleep_duration);
+        tokio::time::sleep(sleep_duration).await;
     }
     
     // Shutdown the tracer provider before the program exits

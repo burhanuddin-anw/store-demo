@@ -1,0 +1,68 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  # - "first_rules.yml"
+  # - "second_rules.yml"
+
+scrape_configs:
+  # The job name is added as a label `job=<job_name>` to any timeseries scraped from this config.
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # OpenTelemetry Collector metrics
+  - job_name: 'otel-collector'
+    static_configs:
+      - targets: ['otel-collector:8889']
+    scrape_interval: 10s
+    metrics_path: /metrics
+
+  # OpenTelemetry Collector internal metrics
+  - job_name: 'otel-collector-internal'
+    static_configs:
+      - targets: ['otel-collector:8888']
+    scrape_interval: 10s
+    metrics_path: /metrics
+
+  # Order Service (Node.js with express-prometheus-middleware)
+  - job_name: 'order-service'
+    static_configs:
+      - targets: ['order-service:3000']
+    scrape_interval: 15s
+    metrics_path: /metrics
+
+  # Makeline Service (Go with prometheus client)
+  - job_name: 'makeline-service'
+    static_configs:
+      - targets: ['makeline-service:3001']
+    scrape_interval: 15s
+    metrics_path: /metrics
+
+  # Product Service (Rust with prometheus crate)
+  - job_name: 'product-service'
+    static_configs:
+      - targets: ['product-service:3002']
+    scrape_interval: 15s
+    metrics_path: /metrics
+
+  # AI Service (Python with prometheus_client)
+  - job_name: 'ai-service'
+    static_configs:
+      - targets: ['ai-service:5001']
+    scrape_interval: 15s
+    metrics_path: /metrics
+
+  # RabbitMQ Management metrics
+  - job_name: 'rabbitmq'
+    static_configs:
+      - targets: ['rabbitmq:15672']
+    scrape_interval: 30s
+    metrics_path: /api/metrics
+
+  # MongoDB metrics (if mongodb_exporter is added)
+  # - job_name: 'mongodb'
+  #   static_configs:
+  #     - targets: ['mongodb-exporter:9216']
+  #   scrape_interval: 30s

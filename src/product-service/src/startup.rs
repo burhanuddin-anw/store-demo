@@ -2,6 +2,7 @@ use actix_cors::Cors;
 use actix_web::dev::Server;
 use actix_web::middleware::Logger;
 use actix_web::{middleware, web, App, HttpServer};
+use tracing_actix_web::TracingLogger;
 
 use crate::configuration::Settings;
 use crate::data::fetch_products;
@@ -25,6 +26,7 @@ pub fn run(mut settings: Settings) -> Result<Server, std::io::Error> {
         let cors = Cors::permissive();
 
         App::new()
+            .wrap(TracingLogger::default())
             .wrap(cors)
             .wrap(Logger::default())
             .wrap(Logger::new("%a %{User-Agent}i"))
