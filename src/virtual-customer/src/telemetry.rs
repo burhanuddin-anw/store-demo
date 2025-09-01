@@ -8,7 +8,7 @@ use opentelemetry::KeyValue;
 pub fn init_tracer() -> Result<(), anyhow::Error> {
     // Get the collector endpoint from environment or use default
     let otlp_endpoint = env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
-        .unwrap_or_else(|_| "http://localhost:4317".to_string());
+        .unwrap_or_else(|_| "http://localhost:4318".to_string());
 
     // Set up resource attributes
     let service_name = "virtual-customer";
@@ -21,13 +21,13 @@ pub fn init_tracer() -> Result<(), anyhow::Error> {
         KeyValue::new("environment", environment),
     ]);
 
-    // Configure OpenTelemetry with the OTLP exporter
-    let _tracer_provider = opentelemetry_otlp::new_pipeline()
+    // Configure OpenTelemetry with the HTTP OTLP exporter
+    let tracer = opentelemetry_otlp::new_pipeline()
         .tracing()
         .with_exporter(
             opentelemetry_otlp::new_exporter()
                 .http()
-                .with_endpoint(otlp_endpoint.replace("4317", "4318")),
+                .with_endpoint(format!("{}/v1/traces", otlp_endpoint)),
         )
         .with_trace_config(
             trace::config()
@@ -39,7 +39,7 @@ pub fn init_tracer() -> Result<(), anyhow::Error> {
     // Configure tracing subscriber with OpenTelemetry
     tracing_subscriber::registry()
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
-        .with(tracing_opentelemetry::layer())
+        .with(tracing_opentelemetry::layer().with_tracer(tracer))
         .init();
 
     println!("OpenTelemetry tracing initialized for virtual-customer");

@@ -2,9 +2,11 @@ use rand::Rng;
 use serde::Serialize;
 use std::env;
 use std::time::{Duration, Instant};
-use tracing::{info, instrument, warn, error};
+use tracing::{info, instrument, error};
 use actix_web::{web, App, HttpServer, HttpResponse, Result};
 use prometheus::{Encoder, TextEncoder};
+use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
+use reqwest_tracing::TracingMiddleware;
 mod telemetry;
 
 async fn metrics() -> Result<HttpResponse> {
@@ -27,7 +29,7 @@ async fn health() -> Result<HttpResponse> {
 
 #[instrument]
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), anyhow::Error> {
     // Initialize OpenTelemetry
     if let Err(e) = telemetry::init_tracer() {
         eprintln!("Failed to initialize OpenTelemetry tracer: {}", e);
@@ -67,8 +69,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // Run both tasks concurrently
     tokio::try_join!(
-        async { server.await.map_err(|e| Box::new(e) as Box<dyn std::error::Error>) },
-        async { order_task.await.map_err(|e| Box::new(e) as Box<dyn std::error::Error>)? }
+        async { server.await.map_err(|e| anyhow::Error::from(e)) },
+        async { order_task.await.map_err(|e| anyhow::Error::from(e))? }
     )?;
     
     // Shutdown the tracer provider before the program exits
@@ -76,7 +78,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn order_submission_loop(order_service_url: String, orders_per_hour: u64) -> Result<(), Box<dyn std::error::Error>> {
+#[instrument]
+async fn order_submission_loop(order_service_url: String, orders_per_hour: u64) -> Result<(), anyhow::Error> {
     println!("Orders to submit per hour: {}", orders_per_hour);
 
     let minutes: f64 = 60.0;
@@ -93,6 +96,11 @@ async fn order_submission_loop(order_service_url: String, orders_per_hour: u64) 
     let sleep_duration = Duration::from_secs_f64(order_submission_interval);
     println!("Sleep duration between orders: {:?}", sleep_duration);
 
+    // Create an instrumented HTTP client
+    let client: ClientWithMiddleware = ClientBuilder::new(reqwest::Client::new())
+        .with(TracingMiddleware::default())
+        .build();
+
     // order counter
     let mut order_counter = 0;
 
@@ -100,9 +108,6 @@ async fn order_submission_loop(order_service_url: String, orders_per_hour: u64) 
     let start_time = Instant::now();
 
     loop {
-        // Create a span for this order processing cycle
-        let _span = tracing::span!(tracing::Level::INFO, "process_order").entered();
-        
         order_counter += 1;
 
         // generate a random customer id
@@ -135,14 +140,7 @@ async fn order_submission_loop(order_service_url: String, orders_per_hour: u64) 
         let order = Order { customer_id, items };
         let serialized_order = serde_json::to_string(&order)?;
         
-        // Create a span for the HTTP request
-        let _span = tracing::span!(tracing::Level::INFO, "submit_order", 
-            customer_id = %order.customer_id, 
-            items_count = order.items.len()
-        ).entered();
-        
-        let client = reqwest::Client::new();
-        info!(url = %order_service_url, "Sending order request");
+        info!(url = %order_service_url, customer_id = %order.customer_id, "Sending order request");
         
         let response = client
             .post(order_service_url.clone())

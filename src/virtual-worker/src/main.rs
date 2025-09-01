@@ -4,6 +4,8 @@ use std::time::{Duration, Instant};
 use tracing::{info, instrument, error};
 use actix_web::{web, App, HttpServer, HttpResponse, Result};
 use prometheus::{Encoder, TextEncoder};
+use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
+use reqwest_tracing::TracingMiddleware;
 mod telemetry;
 
 async fn metrics() -> Result<HttpResponse> {
@@ -26,7 +28,7 @@ async fn health() -> Result<HttpResponse> {
 
 #[instrument]
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), anyhow::Error> {
     // Initialize OpenTelemetry
     if let Err(e) = telemetry::init_tracer() {
         eprintln!("Failed to initialize OpenTelemetry tracer: {}", e);
@@ -58,8 +60,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // Run both tasks concurrently
     tokio::try_join!(
-        async { server.await.map_err(|e| Box::new(e) as Box<dyn std::error::Error>) },
-        async { worker_task.await.map_err(|e| Box::new(e) as Box<dyn std::error::Error>)? }
+        async { server.await.map_err(|e| anyhow::Error::from(e)) },
+        async { worker_task.await.map_err(|e| anyhow::Error::from(e))? }
     )?;
     
     // Shutdown the tracer provider before the program exits
@@ -67,8 +69,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn worker_loop(order_service_url: String, orders_per_hour: u64) -> Result<(), Box<dyn std::error::Error>> {
-    let client = reqwest::Client::new();
+#[instrument]
+async fn worker_loop(order_service_url: String, orders_per_hour: u64) -> Result<(), anyhow::Error> {
+    // Create an instrumented HTTP client
+    let client: ClientWithMiddleware = ClientBuilder::new(reqwest::Client::new())
+        .with(TracingMiddleware::default())
+        .build();
 
     if orders_per_hour > 0 {
         println!("Orders to process per hour: {}", orders_per_hour);
@@ -140,9 +146,9 @@ enum OrderStatus {
 
 #[instrument(name = "get_orders", skip(client))]
 async fn get_orders(
-    client: &reqwest::Client,
+    client: &ClientWithMiddleware,
     url: &str,
-) -> Result<Vec<Order>, Box<dyn std::error::Error>> {
+) -> Result<Vec<Order>, anyhow::Error> {
     let response = client.get(format!("{}/order/fetch", url)).send().await;
 
     match response {
@@ -181,10 +187,10 @@ async fn get_orders(
 
 #[instrument(name = "process_orders", skip(client, orders))]
 async fn process_orders(
-    client: &reqwest::Client,
+    client: &ClientWithMiddleware,
     orders: Vec<Order>,
     url: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), anyhow::Error> {
     // keep track of how long we've been running
     let start_time = Instant::now();
 
